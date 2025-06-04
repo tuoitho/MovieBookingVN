@@ -1,10 +1,10 @@
 const mongoose = require('mongoose');
 
-// Schema for individual seats
+// Schema cho một ghế trong phòng chiếu
 const seatSchema = new mongoose.Schema({
     seatNumber: {
         type: String,
-        required: true
+        required: [true, 'Vui lòng nhập số ghế']
     },
     type: {
         type: String,
@@ -17,37 +17,36 @@ const seatSchema = new mongoose.Schema({
     }
 });
 
-// Schema for rooms within a cinema
+// Schema cho một phòng chiếu
 const roomSchema = new mongoose.Schema({
     roomName: {
         type: String,
-        required: true
+        required: [true, 'Vui lòng nhập tên phòng chiếu']
     },
     seatLayout: {
         type: [[seatSchema]],
-        required: true
+        required: [true, 'Vui lòng cung cấp sơ đồ ghế']
     },
     capacity: {
         type: Number,
-        required: true
+        required: [true, 'Vui lòng nhập sức chứa của phòng']
     }
 });
 
-// Main cinema schema
+// Schema chính cho rạp chiếu phim
 const cinemaSchema = new mongoose.Schema({
     name: {
         type: String,
-        required: [true, 'Please provide cinema name'],
-        unique: true,
-        trim: true
+        required: [true, 'Vui lòng nhập tên rạp'],
+        unique: true
     },
     address: {
         type: String,
-        required: [true, 'Please provide cinema address']
+        required: [true, 'Vui lòng nhập địa chỉ rạp']
     },
     city: {
         type: String,
-        required: [true, 'Please provide city']
+        required: [true, 'Vui lòng nhập thành phố']
     },
     logoUrl: {
         type: String
@@ -57,23 +56,23 @@ const cinemaSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Index for searching and filtering
+// Index cho tìm kiếm theo thành phố
 cinemaSchema.index({ city: 1 });
-cinemaSchema.index({ name: 'text' });
 
-// Virtual for total capacity
-cinemaSchema.virtual('totalCapacity').get(function() {
-    return this.rooms.reduce((total, room) => total + room.capacity, 0);
-});
-
-// Method to check if a room exists
-cinemaSchema.methods.hasRoom = function(roomId) {
-    return this.rooms.some(room => room._id.toString() === roomId);
+// Phương thức tĩnh để kiểm tra xem phòng có tồn tại không
+cinemaSchema.statics.findRoom = function(cinemaId, roomId) {
+    return this.findOne({
+        _id: cinemaId,
+        'rooms._id': roomId
+    }, {
+        'rooms.$': 1
+    });
 };
 
-// Method to get a specific room
-cinemaSchema.methods.getRoom = function(roomId) {
-    return this.rooms.find(room => room._id.toString() === roomId);
+// Phương thức instance để thêm phòng mới
+cinemaSchema.methods.addRoom = function(roomData) {
+    this.rooms.push(roomData);
+    return this.save();
 };
 
 module.exports = mongoose.model('Cinema', cinemaSchema); 
