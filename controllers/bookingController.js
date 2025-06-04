@@ -70,26 +70,34 @@ const bookingController = {
 
     // Xử lý callback từ VNPay
     handleVNPayCallback: catchAsync(async (req, res) => {
-        // Xác thực chữ ký và kiểm tra trạng thái thanh toán
-        const isValidPayment = vnpayService.verifyReturnUrl(req.query);
+        const vnpayResponse = { ...req.query };
+        
+        // **SỬA LẠI: Không gọi verify ở đây nữa, gọi trong service nếu cần**
+        const isValidPayment = vnpayService.verifyReturnUrl(vnpayResponse);
 
-        const vnpayData = {
-            status: isValidPayment ? 'success' : 'failed',
-            transactionId: req.query.vnp_TransactionNo,
-            amount: req.query.vnp_Amount / 100, // Chia cho 100 vì VNPay gửi số tiền x100
-            bankCode: req.query.vnp_BankCode,
-            bankTranNo: req.query.vnp_BankTranNo,
-            orderInfo: req.query.vnp_OrderInfo,
-            payDate: req.query.vnp_PayDate,
-            transactionType: req.query.vnp_TransactionType,
-            rawResponse: req.query
+        // **SỬA LỖI LOGIC QUAN TRỌNG: Lấy bookingId từ vnp_TxnRef**
+        // vnp_TxnRef có định dạng: `${date.getTime()}_${booking._id}`
+        const bookingId = vnpayResponse.vnp_TxnRef.split('_')[1];
+
+        // Dữ liệu để cập nhật vào booking
+        const paymentData = {
+            status: isValidPayment && vnpayResponse.vnp_ResponseCode === '00' ? 'success' : 'failed',
+            transactionId: vnpayResponse.vnp_TransactionNo,
+            rawResponse: vnpayResponse
         };
+        
+        // Cập nhật trạng thái booking dựa trên kết quả thanh toán
+        await bookingService.handlePaymentCallback(bookingId, paymentData);
 
-        const bookingId = req.query.vnp_OrderInfo.split('_')[1]; // Format: "BOOKING_id"
-        const booking = await bookingService.handlePaymentCallback(bookingId, vnpayData);
+        // Chuyển hướng người dùng về trang kết quả thanh toán trên frontend
+        const redirectUrl = new URL(`${process.env.FRONTEND_URL}/payment/result`);
+        redirectUrl.searchParams.set('bookingId', bookingId);
+        redirectUrl.searchParams.set('status', paymentData.status);
+        redirectUrl.searchParams.set('message', isValidPayment ? 'Payment successful' : 'Payment failed or invalid signature');
+        redirectUrl.searchParams.set('orderId', vnpayResponse.vnp_TxnRef);
+        redirectUrl.searchParams.set('amount', vnpayResponse.vnp_Amount / 100);
 
-        // Chuyển hướng người dùng về trang kết quả thanh toán
-        res.redirect(`${process.env.FRONTEND_URL}/payment/result?bookingId=${booking._id}&status=${vnpayData.status}`);
+        res.redirect(redirectUrl.toString());
     }),
 
     // Xử lý callback từ Momo
