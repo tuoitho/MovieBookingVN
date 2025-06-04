@@ -168,7 +168,7 @@ class BookingService {
         if (!booking) {
             throw new ApiError(404, 'Không tìm thấy booking');
         }
-
+        console.log(paymentData);
         // Xử lý kết quả thanh toán
         if (paymentData.status === 'success') {
             await booking.updatePaymentStatus('completed', {

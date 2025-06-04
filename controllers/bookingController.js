@@ -97,7 +97,12 @@ const bookingController = {
         redirectUrl.searchParams.set('orderId', vnpayResponse.vnp_TxnRef);
         redirectUrl.searchParams.set('amount', vnpayResponse.vnp_Amount / 100);
 
-        res.redirect(redirectUrl.toString());
+        // res.redirect(redirectUrl.toString());
+        //TODO: CẦN LÀM
+        res.json({
+            status: 'success',
+            data: { redirectUrl: redirectUrl.toString() }
+        });
     }),
 
     // Xử lý callback từ Momo
