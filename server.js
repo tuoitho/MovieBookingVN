@@ -11,6 +11,12 @@ const helmet = require('helmet');
 const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const { errorHandler, notFound } = require('./middlewares/errorMiddleware');
+const movieRoutes = require('./routes/movieRoutes');
+const cinemaRoutes = require('./routes/cinemaRoutes');
+const showtimeRoutes = require('./routes/showtimeRoutes');
+const bookingRoutes = require('./routes/bookingRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
+const promotionRoutes = require('./routes/promotionRoutes');
 
 // Initialize express app
 const app = express();
@@ -36,12 +42,12 @@ app.use(morgan('dev'));
 
 // Routes
 app.use('/api/v1/auth', require('./routes/authRoutes'));
-app.use('/api/v1/movies', require('./routes/movieRoutes'));
-app.use('/api/v1/cinemas', require('./routes/cinemaRoutes'));
-app.use('/api/v1/showtimes', require('./routes/showtimeRoutes'));
-app.use('/api/v1/bookings', require('./routes/bookingRoutes'));
-app.use('/api/v1/promotions', require('./routes/promotionRoutes'));
-app.use('/api/v1/reviews', require('./routes/reviewRoutes'));
+app.use('/api/v1/movies', movieRoutes);
+app.use('/api/v1/cinemas', cinemaRoutes);
+app.use('/api/v1/showtimes', showtimeRoutes);
+app.use('/api/v1/bookings', bookingRoutes);
+app.use('/api/v1/reviews', reviewRoutes);
+app.use('/api/v1/promotions', promotionRoutes);
 
 // Error Handling
 app.use(notFound);
