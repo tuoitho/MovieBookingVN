@@ -1,31 +1,61 @@
+const { setupColoredConsole } = require('./utils/logger');
+
+// Thiết lập console với màu sắc
+setupColoredConsole();
+
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config();
+const helmet = require('helmet');
+const morgan = require('morgan');
+const rateLimit = require('express-rate-limit');
+const { errorHandler, notFound } = require('./middlewares/errorMiddleware');
 
+
+
+
+// Initialize express app
 const app = express();
 
+// Security Middleware
+app.use(helmet());
+app.use(cors({
+    origin: process.env.FRONTEND_URL,
+    credentials: true
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 100 // limit each IP to 100 requests per windowMs
+});
+app.use(limiter);
+
 // Middleware
-app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+app.use(morgan('dev'));
 
-// Connect to MongoDB
+// Routes
+app.use('/api/v1/auth', require('./routes/authRoutes'));
+app.use('/api/v1/movies', require('./routes/movieRoutes'));
+app.use('/api/v1/cinemas', require('./routes/cinemaRoutes'));
+app.use('/api/v1/showtimes', require('./routes/showtimeRoutes'));
+app.use('/api/v1/bookings', require('./routes/bookingRoutes'));
+app.use('/api/v1/promotions', require('./routes/promotionRoutes'));
+
+// Error Handling
+app.use(notFound);
+app.use(errorHandler);
+
+// Database Connection
 mongoose.connect(process.env.MONGODB_URI)
-  .then(() => console.log('Connected to MongoDB'))
-  .catch((err) => console.error('MongoDB connection error:', err));
+    .then(() => console.log('Connected to MongoDB'))
+    .catch((err) => console.error('MongoDB connection error:', err));
 
-// Basic route
-app.get('/', (req, res) => {
-  res.json({ message: 'Welcome to Movie Ticket Booking API' });
-});
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-  console.error(err.stack);
-  res.status(500).json({ message: 'Something went wrong!' });
-});
-
+// Start Server
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
+    console.log(`Server is running on port ${PORT}`);
+}); 

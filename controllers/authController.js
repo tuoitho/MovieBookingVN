@@ -1,223 +1,220 @@
-const User = require('../models/User');
+const User = require('../models/userModel');
 const jwt = require('jsonwebtoken');
-const { promisify } = require('util');
-const crypto = require('crypto');
+const bcrypt = require('bcryptjs');
 
-// Create JWT token
-const signToken = (id) => {
-  return jwt.sign({ id }, process.env.JWT_SECRET, {
-    expiresIn: process.env.JWT_EXPIRES_IN
-  });
+// @desc    Register user
+// @route   POST /api/v1/auth/register
+// @access  Public
+exports.register = async (req, res, next) => {
+    try {
+        const { fullName, email, password, phoneNumber } = req.body;
+
+        // Check if user exists
+        const userExists = await User.findOne({ email });
+        if (userExists) {
+            return res.status(400).json({
+                success: false,
+                message: 'Email already registered'
+            });
+        }
+
+        // Create user
+        const user = await User.create({
+            fullName,
+            email,
+            password,
+            phoneNumber
+        });
+
+        // Generate token
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+            expiresIn: process.env.JWT_EXPIRES_IN
+        });
+
+        res.status(201).json({
+            success: true,
+            token,
+            user: {
+                id: user._id,
+                fullName: user.fullName,
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
-// Send JWT token response
-const createSendToken = (user, statusCode, res) => {
-  const token = signToken(user._id);
+// @desc    Login user
+// @route   POST /api/v1/auth/login
+// @access  Public
+exports.login = async (req, res, next) => {
+    try {
+        const { email, password } = req.body;
+        // Check if email and password are provided
+        if (!email || !password) {
+            return res.status(400).json({
+                success: false,
+                message: 'Please provide email and password'
+            });
+        }
 
-  user.password = undefined;
+        // Check if user exists
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid credentials'
+            });
+        }
 
-  res.status(statusCode).json({
-    status: 'success',
-    token,
-    data: { user }
-  });
+        // Check if password matches
+        const isMatch = await user.matchPassword(password);
+        if (!isMatch) {
+            return res.status(401).json({
+                success: false,
+                message: 'Invalid credentials'
+            });
+        }
+
+        // Generate token
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+            expiresIn: process.env.JWT_EXPIRES_IN
+        });
+
+        res.status(200).json({
+            success: true,
+            token,
+            user: {
+                id: user._id,
+                fullName: user.fullName,
+                email: user.email,
+                role: user.role
+            }
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
-// Register new user
-exports.signup = async (req, res) => {
-  try {
-    const newUser = await User.create({
-      name: req.body.name,
-      email: req.body.email,
-      password: req.body.password,
-      role: req.body.role
-    });
-
-    createSendToken(newUser, 201, res);
-  } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
-  }
+// @desc    Get current logged in user
+// @route   GET /api/v1/auth/me
+// @access  Private
+exports.getMe = async (req, res, next) => {
+    try {
+        const user = await User.findById(req.user.id).select('-password');
+        res.status(200).json({
+            success: true,
+            data: user
+        });
+    } catch (error) {
+        next(error);
+    }
 };
 
-// Login user
-exports.login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+// @desc    Forgot password
+// @route   POST /api/v1/auth/forgotpassword
+// @access  Public
+exports.forgotPassword = async (req, res, next) => {
+    try {
+        const user = await User.findOne({ email: req.body.email });
 
-    // Check if email and password exist
-    if (!email || !password) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Please provide email and password'
-      });
+        if (!user) {
+            return res.status(404).json({
+                success: false,
+                message: 'There is no user with that email'
+            });
+        }
+
+        // Get reset token
+        const resetToken = crypto.randomBytes(20).toString('hex');
+
+        // Hash token and set to resetPasswordToken field
+        user.resetPasswordToken = crypto
+            .createHash('sha256')
+            .update(resetToken)
+            .digest('hex');
+
+        // Set expire
+        user.resetPasswordExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+        await user.save();
+
+        // TODO: Send email with reset token
+
+        res.status(200).json({
+            success: true,
+            message: 'Email sent'
+        });
+    } catch (error) {
+        next(error);
     }
-
-    // Check if user exists && password is correct
-    const user = await User.findOne({ email }).select('+password');
-    if (!user || !(await user.correctPassword(password, user.password))) {
-      return res.status(401).json({
-        status: 'fail',
-        message: 'Incorrect email or password'
-      });
-    }
-
-    createSendToken(user, 200, res);
-  } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
-  }
 };
 
-// Forgot password
-exports.forgotPassword = async (req, res) => {
-  try {
-    // 1) Get user based on POSTed email
-    const user = await User.findOne({ email: req.body.email });
-    if (!user) {
-      return res.status(404).json({
-        status: 'fail',
-        message: 'There is no user with that email address'
-      });
+// @desc    Reset password
+// @route   PUT /api/v1/auth/resetpassword/:resettoken
+// @access  Public
+exports.resetPassword = async (req, res, next) => {
+    try {
+        // Get hashed token
+        const resetPasswordToken = crypto
+            .createHash('sha256')
+            .update(req.params.resettoken)
+            .digest('hex');
+
+        const user = await User.findOne({
+            resetPasswordToken,
+            resetPasswordExpires: { $gt: Date.now() }
+        });
+
+        if (!user) {
+            return res.status(400).json({
+                success: false,
+                message: 'Invalid token'
+            });
+        }
+
+        // Set new password
+        user.password = req.body.password;
+        user.resetPasswordToken = undefined;
+        user.resetPasswordExpires = undefined;
+        await user.save();
+
+        // Generate token
+        const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+            expiresIn: process.env.JWT_EXPIRES_IN
+        });
+
+        res.status(200).json({
+            success: true,
+            token
+        });
+    } catch (error) {
+        next(error);
     }
-
-    // 2) Generate random reset token
-    const resetToken = user.createPasswordResetToken();
-    await user.save({ validateBeforeSave: false });
-
-    // 3) Send it to user's email (in a real app, you would send an email here)
-    // For now, we'll just return the token in the response
-    res.status(200).json({
-      status: 'success',
-      message: 'Token sent to email!',
-      resetToken // In production, don't send this in the response
-    });
-  } catch (err) {
-    res.status(500).json({
-      status: 'error',
-      message: 'Error sending email. Try again later!'
-    });
-  }
 };
 
-// Reset password
-exports.resetPassword = async (req, res) => {
-  try {
-    // 1) Get user based on the token
-    const hashedToken = crypto
-      .createHash('sha256')
-      .update(req.params.token)
-      .digest('hex');
+// @desc    Update user details
+// @route   PUT /api/v1/auth/updatedetails
+// @access  Private
+exports.updateDetails = async (req, res, next) => {
+    try {
+        const fieldsToUpdate = {
+            fullName: req.body.fullName,
+            phoneNumber: req.body.phoneNumber
+        };
 
-    const user = await User.findOne({
-      passwordResetToken: hashedToken,
-      passwordResetExpires: { $gt: Date.now() }
-    });
+        const user = await User.findByIdAndUpdate(req.user.id, fieldsToUpdate, {
+            new: true,
+            runValidators: true
+        });
 
-    // 2) If token has not expired, and there is user, set the new password
-    if (!user) {
-      return res.status(400).json({
-        status: 'fail',
-        message: 'Token is invalid or has expired'
-      });
+        res.status(200).json({
+            success: true,
+            data: user
+        });
+    } catch (error) {
+        next(error);
     }
-    user.password = req.body.password;
-    user.passwordResetToken = undefined;
-    user.passwordResetExpires = undefined;
-    await user.save();
-
-    // 3) Update changedPasswordAt property for the user (should be handled in a pre-save middleware)
-
-    // 4) Log the user in, send JWT
-    createSendToken(user, 200, res);
-  } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
-  }
-};
-
-// Update password for logged in user
-exports.updatePassword = async (req, res) => {
-  try {
-    // 1) Get user from collection
-    const user = await User.findById(req.user.id).select('+password');
-
-    // 2) Check if POSTed current password is correct
-    if (!(await user.correctPassword(req.body.passwordCurrent, user.password))) {
-      return res.status(401).json({
-        status: 'fail',
-        message: 'Your current password is wrong'
-      });
-    }
-
-    // 3) If so, update password
-    user.password = req.body.password;
-    await user.save();
-
-    // 4) Log user in, send JWT
-    createSendToken(user, 200, res);
-  } catch (err) {
-    res.status(400).json({
-      status: 'fail',
-      message: err.message
-    });
-  }
-};
-
-// Protect routes middleware
-exports.protect = async (req, res, next) => {
-  try {
-    // Get token
-    let token;
-    if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-      token = req.headers.authorization.split(' ')[1];
-    }
-
-    if (!token) {
-      return res.status(401).json({
-        status: 'fail',
-        message: 'You are not logged in'
-      });
-    }
-
-    // Verify token
-    const decoded = await promisify(jwt.verify)(token, process.env.JWT_SECRET);
-
-    // Check if user still exists
-    const user = await User.findById(decoded.id);
-    if (!user) {
-      return res.status(401).json({
-        status: 'fail',
-        message: 'User no longer exists'
-      });
-    }
-
-    // Grant access to protected route
-    req.user = user;
-    next();
-  } catch (err) {
-    res.status(401).json({
-      status: 'fail',
-      message: 'Invalid token'
-    });
-  }
-};
-
-// Restrict to certain roles
-exports.restrictTo = (...roles) => {
-  return (req, res, next) => {
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        status: 'fail',
-        message: 'You do not have permission to perform this action'
-      });
-    }
-    next();
-  };
-};
+}; 

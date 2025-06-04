@@ -5,7 +5,7 @@ const router = express.Router();
 router.get('/test', (req, res) => {
     res.json({
         success: true,
-        message: 'Booking route is working'
+        message: 'Cinema route is working'
     });
 });
 

@@ -1,20 +1,21 @@
 const express = require('express');
-const movieController = require('../controllers/movieController');
-const authController = require('../controllers/authController');
-
 const router = express.Router();
+const movieController = require('../controllers/movieController');
+const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 // Public routes
-router.get('/', movieController.getAllMovies);
+router.get('/search', movieController.searchMovies);
+router.get('/upcoming', movieController.getUpcomingMovies);
+router.get('/now-showing', movieController.getNowShowingMovies);
+router.get('/', movieController.getMovies);
 router.get('/:id', movieController.getMovie);
-router.get('/status/:status', movieController.getMoviesByStatus);
 
 // Protected routes (admin only)
-router.use(authController.protect);
-router.use(authController.restrictTo('admin'));
+router.use(protect);
+router.use(restrictTo('admin'));
 
 router.post('/', movieController.createMovie);
 router.patch('/:id', movieController.updateMovie);
 router.delete('/:id', movieController.deleteMovie);
 
-module.exports = router;
+module.exports = router; 
