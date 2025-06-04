@@ -1,0 +1,24 @@
+@baseUrl = {{host}}
+@token ={{jwtToken}}
+
+### Login as admin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+    "email": "tes22t4222@example.com",
+    "password": "password123"
+}
+
+### Get current user profile
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{token}} 
+
+### Login as admin
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+    "email": "admin@moviebooking.com",
+    "password": "Admin@123"
+}
