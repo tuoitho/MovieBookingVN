@@ -97,6 +97,43 @@ const cinemaController = {
             status: 'success',
             data: { room }
         });
+    }),
+
+    // Lấy danh sách rạp gần đây
+    getNearbyCinemas: catchAsync(async (req, res) => {
+        const { city } = req.query;
+        const coordinates = req.query.lat && req.query.lng 
+            ? { lat: parseFloat(req.query.lat), lng: parseFloat(req.query.lng) }
+            : null;
+
+        const cinemas = await cinemaService.getNearbyCinemas(city, coordinates);
+        res.json({
+            status: 'success',
+            results: cinemas.length,
+            data: { cinemas }
+        });
+    }),
+
+    // Lấy lịch chiếu của rạp
+    getCinemaSchedule: catchAsync(async (req, res) => {
+        const { cinemaId } = req.params;
+        const date = req.query.date ? new Date(req.query.date) : new Date();
+
+        const schedule = await cinemaService.getCinemaSchedule(cinemaId, date);
+        res.json({
+            status: 'success',
+            data: { schedule }
+        });
+    }),
+
+    // Lấy thông tin chi tiết phòng chiếu cho user
+    getRoomDetailsForUser: catchAsync(async (req, res) => {
+        const { cinemaId, roomId } = req.params;
+        const roomDetails = await cinemaService.getRoomDetailsForUser(cinemaId, roomId);
+        res.json({
+            status: 'success',
+            data: { room: roomDetails }
+        });
     })
 };
 

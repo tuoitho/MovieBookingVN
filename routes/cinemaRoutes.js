@@ -5,8 +5,10 @@ const { protect, restrictTo } = require('../middlewares/authMiddleware');
 
 // Public routes
 router.get('/', cinemaController.getCinemas);
+router.get('/nearby', cinemaController.getNearbyCinemas);
 router.get('/:id', cinemaController.getCinema);
-router.get('/:cinemaId/rooms/:roomId', cinemaController.getRoom);
+router.get('/:cinemaId/schedule', cinemaController.getCinemaSchedule);
+router.get('/:cinemaId/rooms/:roomId', cinemaController.getRoomDetailsForUser);
 
 // Protected routes (Admin only)
 router.use(protect);
