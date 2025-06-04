@@ -91,7 +91,6 @@ const bookingSchema = new mongoose.Schema({
 // Index cho tìm kiếm booking
 bookingSchema.index({ userId: 1, createdAt: -1 });
 bookingSchema.index({ showtimeId: 1, status: 1 });
-bookingSchema.index({ bookingCode: 1 });
 
 // Tự động tạo mã booking
 bookingSchema.pre('save', async function(next) {
