@@ -1,5 +1,6 @@
 const movieService = require('../services/movieService');
 const catchAsync = require('../utils/catchAsync');
+const ApiError = require('../utils/ApiError');
 
 const movieController = {
     // Create a new movie
@@ -13,39 +14,44 @@ const movieController = {
 
     // Get all movies with filters and pagination
     getMovies: catchAsync(async (req, res) => {
-        const { page = 1, limit = 10, ...filters } = req.query;
-        const result = await movieService.getMovies(filters, parseInt(page), parseInt(limit));
-        res.status(200).json({
-            status: 'success',
-            data: result
-        });
+        const filters = {
+            status: req.query.status,
+            genre: req.query.genre,
+            search: req.query.search
+        };
+
+        const options = {
+            page: req.query.page,
+            limit: req.query.limit,
+            sort: req.query.sort
+        };
+
+        const result = await movieService.getMovies(filters, options);
+        res.json(result);
     }),
 
     // Get a single movie by ID
     getMovie: catchAsync(async (req, res) => {
         const movie = await movieService.getMovieById(req.params.id);
-        res.status(200).json({
-            status: 'success',
-            data: { movie }
-        });
+        res.json(movie);
+    }),
+
+    // Get a single movie by slug
+    getMovieBySlug: catchAsync(async (req, res) => {
+        const movie = await movieService.getMovieBySlug(req.params.slug);
+        res.json(movie);
     }),
 
     // Update a movie
     updateMovie: catchAsync(async (req, res) => {
         const movie = await movieService.updateMovie(req.params.id, req.body);
-        res.status(200).json({
-            status: 'success',
-            data: { movie }
-        });
+        res.json(movie);
     }),
 
     // Delete a movie
     deleteMovie: catchAsync(async (req, res) => {
-        const result = await movieService.deleteMovie(req.params.id);
-        res.status(200).json({
-            status: 'success',
-            data: result
-        });
+        await movieService.deleteMovie(req.params.id);
+        res.status(204).json(null);
     }),
 
     // Search movies
@@ -54,26 +60,33 @@ const movieController = {
         const movies = await movieService.searchMovies(query);
         res.status(200).json({
             status: 'success',
-            data: { movies }
-        });
-    }),
-
-    // Get upcoming movies
-    getUpcomingMovies: catchAsync(async (req, res) => {
-        const movies = await movieService.getUpcomingMovies();
-        res.status(200).json({
-            status: 'success',
+            results: movies.length,
             data: { movies }
         });
     }),
 
     // Get now showing movies
     getNowShowingMovies: catchAsync(async (req, res) => {
-        const movies = await movieService.getNowShowingMovies();
-        res.status(200).json({
-            status: 'success',
-            data: { movies }
-        });
+        const options = {
+            page: req.query.page,
+            limit: req.query.limit,
+            sort: req.query.sort
+        };
+        
+        const result = await movieService.getNowShowingMovies(options);
+        res.json(result);
+    }),
+
+    // Get coming soon movies
+    getComingSoonMovies: catchAsync(async (req, res) => {
+        const options = {
+            page: req.query.page,
+            limit: req.query.limit,
+            sort: req.query.sort
+        };
+        
+        const result = await movieService.getComingSoonMovies(options);
+        res.json(result);
     })
 };
 

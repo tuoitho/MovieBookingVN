@@ -4,53 +4,53 @@ const slugify = require('slugify');
 const movieSchema = new mongoose.Schema({
     title: {
         type: String,
-        required: [true, 'Please provide movie title'],
-        unique: true,
-        trim: true
+        required: [true, 'Vui lòng nhập tên phim'],
+        unique: false
     },
     vietnameseTitle: {
         type: String,
-        trim: true
+        required: [true, 'Vui lòng nhập tên phim tiếng Việt']
     },
     description: {
         type: String,
-        required: [true, 'Please provide movie description']
+        required: [true, 'Vui lòng nhập mô tả phim']
     },
     posterUrl: {
         type: String,
-        required: [true, 'Please provide movie poster URL']
+        required: [true, 'Vui lòng cung cấp URL poster phim']
     },
     bannerUrl: {
         type: String
     },
     trailerUrl: {
         type: String,
-        required: [true, 'Please provide movie trailer URL']
+        required: [true, 'Vui lòng cung cấp URL trailer phim']
     },
     duration: {
         type: Number,
-        required: [true, 'Please provide movie duration in minutes']
+        required: [true, 'Vui lòng nhập thời lượng phim']
     },
     releaseDate: {
         type: Date,
-        required: [true, 'Please provide release date']
+        required: [true, 'Vui lòng nhập ngày khởi chiếu']
     },
     endDate: {
         type: Date
     },
     genre: {
         type: [String],
-        required: [true, 'Please provide at least one genre']
+        required: [true, 'Vui lòng chọn ít nhất một thể loại']
     },
     director: String,
     actors: [String],
     language: {
         type: String,
-        required: [true, 'Please provide movie language']
+        required: [true, 'Vui lòng nhập ngôn ngữ phim']
     },
     rating: {
         type: String,
-        enum: ['P', 'C13', 'C16', 'C18']
+        enum: ['P', 'C13', 'C16', 'C18'],
+        default: 'P'
     },
     status: {
         type: String,
@@ -60,8 +60,8 @@ const movieSchema = new mongoose.Schema({
     averageRating: {
         type: Number,
         default: 0,
-        min: [1, 'Rating must be at least 1'],
-        max: [5, 'Rating cannot be more than 5']
+        min: 0,
+        max: 5
     },
     totalReviews: {
         type: Number,
@@ -75,18 +75,39 @@ const movieSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Create slug from title before saving
+// Tạo slug trước khi lưu
 movieSchema.pre('save', function(next) {
     if (!this.isModified('title')) {
-        next();
-        return;
+        return next();
     }
     this.slug = slugify(this.title, {
         lower: true,
-        strict: true
+        strict: true,
+        locale: 'vi'
     });
     next();
 });
+
+// Phương thức tĩnh để kiểm tra xem phim có đang chiếu không
+movieSchema.statics.isNowShowing = function(movieId) {
+    return this.findOne({
+        _id: movieId,
+        status: 'now_showing',
+        releaseDate: { $lte: new Date() },
+        $or: [
+            { endDate: { $gt: new Date() } },
+            { endDate: null }
+        ]
+    });
+};
+
+// Phương thức instance để cập nhật rating trung bình
+movieSchema.methods.updateAverageRating = async function(newRating) {
+    const currentTotal = this.averageRating * this.totalReviews;
+    this.totalReviews += 1;
+    this.averageRating = (currentTotal + newRating) / this.totalReviews;
+    await this.save();
+};
 
 // Automatically update status based on dates
 movieSchema.pre('save', function(next) {

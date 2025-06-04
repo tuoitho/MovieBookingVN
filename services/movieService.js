@@ -2,143 +2,153 @@ const Movie = require('../models/movieModel');
 const ApiError = require('../utils/ApiError');
 
 class MovieService {
-    // Create a new movie
+    // Tạo phim mới
     async createMovie(movieData) {
-        try {
-            const movie = new Movie(movieData);
-            return await movie.save();
-        } catch (error) {
-            throw new ApiError(400, 'Error creating movie: ' + error.message);
-        }
+        const movie = await Movie.create(movieData);
+        return movie;
     }
 
-    // Get all movies with filtering and pagination
-    async getMovies(filters = {}, page = 1, limit = 10) {
-        try {
-            const query = {};
-            
-            // Apply filters
-            if (filters.title) {
-                query.title = { $regex: filters.title, $options: 'i' };
-            }
-            if (filters.genre) {
-                query.genre = { $in: Array.isArray(filters.genre) ? filters.genre : [filters.genre] };
-            }
-            if (filters.language) {
-                query.language = filters.language;
-            }
-            if (filters.releaseDate) {
-                query.releaseDate = { $gte: new Date(filters.releaseDate) };
-            }
-
-            const skip = (page - 1) * limit;
-            
-            const [movies, total] = await Promise.all([
-                Movie.find(query)
-                    .skip(skip)
-                    .limit(limit)
-                    .sort({ releaseDate: -1 }),
-                Movie.countDocuments(query)
-            ]);
-
-            return {
-                movies,
-                pagination: {
-                    currentPage: page,
-                    totalPages: Math.ceil(total / limit),
-                    totalItems: total,
-                    itemsPerPage: limit
-                }
-            };
-        } catch (error) {
-            throw new ApiError(500, 'Error fetching movies: ' + error.message);
+    // Lấy danh sách phim với các tùy chọn lọc và phân trang
+    async getMovies(filters = {}, options = {}) {
+        const query = {};
+        
+        // Xử lý các điều kiện lọc
+        if (filters.status) {
+            query.status = filters.status;
         }
+        
+        if (filters.genre) {
+            query.genre = { $in: Array.isArray(filters.genre) ? filters.genre : [filters.genre] };
+        }
+
+        if (filters.search) {
+            query.$or = [
+                { title: { $regex: filters.search, $options: 'i' } },
+                { vietnameseTitle: { $regex: filters.search, $options: 'i' } }
+            ];
+        }
+
+        // Xử lý phân trang
+        const page = parseInt(options.page) || 1;
+        const limit = parseInt(options.limit) || 10;
+        const skip = (page - 1) * limit;
+
+        // Thực hiện truy vấn với các điều kiện
+        const movies = await Movie.find(query)
+            .sort(options.sort || { releaseDate: -1 })
+            .skip(skip)
+            .limit(limit);
+
+        // Đếm tổng số phim thỏa mãn điều kiện
+        const total = await Movie.countDocuments(query);
+
+        return {
+            movies,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
+        };
     }
 
-    // Get movie by ID
+    // Lấy chi tiết một phim theo ID
     async getMovieById(movieId) {
-        try {
-            const movie = await Movie.findById(movieId);
-            if (!movie) {
-                throw new ApiError(404, 'Movie not found');
-            }
-            return movie;
-        } catch (error) {
-            throw new ApiError(error.status || 500, error.message);
+        const movie = await Movie.findById(movieId);
+        if (!movie) {
+            throw new ApiError(404, 'Không tìm thấy phim');
         }
+        return movie;
     }
 
-    // Update movie
+    // Lấy chi tiết một phim theo slug
+    async getMovieBySlug(slug) {
+        const movie = await Movie.findOne({ slug });
+        if (!movie) {
+            throw new ApiError(404, 'Không tìm thấy phim');
+        }
+        return movie;
+    }
+
+    // Cập nhật thông tin phim
     async updateMovie(movieId, updateData) {
-        try {
-            const movie = await Movie.findByIdAndUpdate(
-                movieId,
-                { $set: updateData },
-                { new: true, runValidators: true }
-            );
-            
-            if (!movie) {
-                throw new ApiError(404, 'Movie not found');
-            }
-            
-            return movie;
-        } catch (error) {
-            throw new ApiError(error.status || 400, 'Error updating movie: ' + error.message);
+        const movie = await Movie.findByIdAndUpdate(
+            movieId,
+            updateData,
+            { new: true, runValidators: true }
+        );
+
+        if (!movie) {
+            throw new ApiError(404, 'Không tìm thấy phim');
         }
+
+        return movie;
     }
 
-    // Delete movie
+    // Xóa phim
     async deleteMovie(movieId) {
-        try {
-            const movie = await Movie.findByIdAndDelete(movieId);
-            
-            if (!movie) {
-                throw new ApiError(404, 'Movie not found');
-            }
-            
-            return { message: 'Movie deleted successfully' };
-        } catch (error) {
-            throw new ApiError(error.status || 500, 'Error deleting movie: ' + error.message);
+        const movie = await Movie.findByIdAndDelete(movieId);
+        if (!movie) {
+            throw new ApiError(404, 'Không tìm thấy phim');
         }
+        return movie;
     }
 
-    // Search movies by title or genre
-    async searchMovies(searchTerm) {
-        try {
-            return await Movie.find({
+    // Lấy danh sách phim đang chiếu
+    async getNowShowingMovies(options = {}) {
+        const currentDate = new Date();
+        return this.getMovies(
+            {
+                status: 'now_showing',
+                releaseDate: { $lte: currentDate },
                 $or: [
-                    { title: { $regex: searchTerm, $options: 'i' } },
-                    { genre: { $regex: searchTerm, $options: 'i' } }
+                    { endDate: { $gt: currentDate } },
+                    { endDate: null }
                 ]
-            });
-        } catch (error) {
-            throw new ApiError(500, 'Error searching movies: ' + error.message);
-        }
+            },
+            options
+        );
     }
 
-    // Get upcoming movies
-    async getUpcomingMovies() {
-        try {
-            const today = new Date();
-            return await Movie.find({
-                releaseDate: { $gt: today }
-            }).sort({ releaseDate: 1 });
-        } catch (error) {
-            throw new ApiError(500, 'Error fetching upcoming movies: ' + error.message);
-        }
+    // Lấy danh sách phim sắp chiếu
+    async getComingSoonMovies(options = {}) {
+        const currentDate = new Date();
+        return this.getMovies(
+            {
+                status: 'coming_soon',
+                releaseDate: { $gt: currentDate }
+            },
+            options
+        );
     }
 
-    // Get now showing movies
-    async getNowShowingMovies() {
-        try {
-            const today = new Date();
-            return await Movie.find({
-                releaseDate: { $lte: today },
-                endDate: { $gte: today }
-            });
-        } catch (error) {
-            throw new ApiError(500, 'Error fetching now showing movies: ' + error.message);
+    // Tìm kiếm phim
+    async searchMovies(query) {
+        if (!query) {
+            throw new ApiError(400, 'Vui lòng cung cấp từ khóa tìm kiếm');
         }
+
+        const movies = await Movie.find({
+            $text: { $search: query }
+        }, {
+            score: { $meta: 'textScore' }
+        })
+        .sort({ score: { $meta: 'textScore' } });
+
+        return movies;
+    }
+
+    // Cập nhật đánh giá trung bình của phim
+    async updateMovieRating(movieId, newRating) {
+        // Validate rating
+        if (!Number.isInteger(newRating) || newRating < 1 || newRating > 5) {
+            throw new ApiError(400, 'Đánh giá phải là số nguyên từ 1 đến 5');
+        }
+
+        const movie = await this.getMovieById(movieId);
+        await movie.updateAverageRating(newRating);
+        return movie;
     }
 }
 
