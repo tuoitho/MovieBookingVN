@@ -1,4 +1,5 @@
 const bookingService = require('../services/bookingService');
+const vnpayService = require('../services/vnpayService');
 const catchAsync = require('../utils/catchAsync');
 
 const bookingController = {
@@ -12,9 +13,18 @@ const bookingController = {
 
         const booking = await bookingService.createBooking(bookingData);
         
+        // Nếu phương thức thanh toán là VNPay, tạo URL thanh toán
+        let paymentUrl = null;
+        if (booking.paymentMethod === 'vnpay') {
+            paymentUrl = vnpayService.createPaymentUrl(booking);
+        }
+        
         res.status(201).json({
             status: 'success',
-            data: { booking }
+            data: { 
+                booking,
+                paymentUrl 
+            }
         });
     }),
 
@@ -60,10 +70,13 @@ const bookingController = {
 
     // Xử lý callback từ VNPay
     handleVNPayCallback: catchAsync(async (req, res) => {
+        // Xác thực chữ ký và kiểm tra trạng thái thanh toán
+        const isValidPayment = vnpayService.verifyReturnUrl(req.query);
+
         const vnpayData = {
-            status: req.query.vnp_ResponseCode === '00' ? 'success' : 'failed',
+            status: isValidPayment ? 'success' : 'failed',
             transactionId: req.query.vnp_TransactionNo,
-            amount: req.query.vnp_Amount,
+            amount: req.query.vnp_Amount / 100, // Chia cho 100 vì VNPay gửi số tiền x100
             bankCode: req.query.vnp_BankCode,
             bankTranNo: req.query.vnp_BankTranNo,
             orderInfo: req.query.vnp_OrderInfo,
