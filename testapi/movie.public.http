@@ -1,0 +1,22 @@
+@baseUrl = {{host}}
+
+### Get all movies
+GET {{baseUrl}}/movies
+
+### Get all movies with pagination and filters
+GET {{baseUrl}}/movies?page=1&limit=10&status=now_showing&genre=Action
+
+### Search movies
+GET {{baseUrl}}/movies/search?query=Avengers
+
+### Get now showing movies
+GET {{baseUrl}}/movies/now-showing?page=1&limit=10
+
+### Get coming soon movies
+GET {{baseUrl}}/movies/coming-soon?page=1&limit=10
+
+### Get movie by ID
+GET {{baseUrl}}/movies/684027317225707556860ce2
+
+### Get movie by slug
+GET {{baseUrl}}/movies/slug/avengers-endgame 
