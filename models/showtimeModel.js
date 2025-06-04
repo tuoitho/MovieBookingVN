@@ -44,7 +44,7 @@ const showtimeSchema = new mongoose.Schema({
     },
     endTime: {
         type: Date,
-        required: [true, 'Vui lòng chọn thời gian kết thúc']
+        default: null
     },
     price: {
         standard: {
@@ -87,24 +87,45 @@ showtimeSchema.pre('save', async function(next) {
 });
 
 // Phương thức để kiểm tra xem suất chiếu có bị trùng không
-showtimeSchema.statics.checkOverlap = async function(cinemaId, roomId, startTime, endTime, excludeId = null) {
+showtimeSchema.statics.checkOverlap = async function(cinemaId, roomId, startTime, excludeId = null) {
+    // Kiểm tra các điều kiện đầu vào
+    if (!cinemaId || !roomId || !startTime) {
+        throw new Error('Thiếu thông tin để kiểm tra trùng lịch');
+    }
+
+    // Tạo query để tìm suất chiếu trùng lịch
     const query = {
         cinemaId,
         roomId,
-        $or: [
-            {
-                startTime: { $lt: endTime },
-                endTime: { $gt: startTime }
-            }
-        ]
+        // Kiểm tra xem startTime có nằm trong khoảng thời gian của suất chiếu nào không
+        startTime: { $lte: startTime },
+        endTime: { $gt: startTime }
     };
 
+    // Nếu đang cập nhật suất chiếu hiện có, loại trừ nó khỏi việc kiểm tra
     if (excludeId) {
         query._id = { $ne: excludeId };
     }
 
-    const overlapping = await this.findOne(query);
-    return overlapping;
+    const overlapping = await this.findOne(query)
+        .populate('movieId', 'title duration')
+        .populate('cinemaId', 'name');
+
+    // Nếu tìm thấy suất chiếu trùng, trả về thông tin chi tiết
+    if (overlapping) {
+        return {
+            hasOverlap: true,
+            overlappingShowtime: {
+                movie: overlapping.movieId.title,
+                duration: overlapping.movieId.duration,
+                cinema: overlapping.cinemaId.name,
+                startTime: overlapping.startTime,
+                endTime: overlapping.endTime
+            }
+        };
+    }
+
+    return null;
 };
 
 // Phương thức để cập nhật trạng thái ghế
