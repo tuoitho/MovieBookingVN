@@ -12,9 +12,6 @@ const morgan = require('morgan');
 const rateLimit = require('express-rate-limit');
 const { errorHandler, notFound } = require('./middlewares/errorMiddleware');
 
-
-
-
 // Initialize express app
 const app = express();
 
@@ -44,6 +41,7 @@ app.use('/api/v1/cinemas', require('./routes/cinemaRoutes'));
 app.use('/api/v1/showtimes', require('./routes/showtimeRoutes'));
 app.use('/api/v1/bookings', require('./routes/bookingRoutes'));
 app.use('/api/v1/promotions', require('./routes/promotionRoutes'));
+app.use('/api/v1/reviews', require('./routes/reviewRoutes'));
 
 // Error Handling
 app.use(notFound);

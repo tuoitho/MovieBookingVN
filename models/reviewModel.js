@@ -25,17 +25,17 @@ const reviewSchema = new mongoose.Schema({
     timestamps: true
 });
 
-// Compound index to ensure one review per user per movie
+// Một người dùng chỉ được đánh giá một phim một lần
 reviewSchema.index({ userId: 1, movieId: 1 }, { unique: true });
 
-// Index for efficient querying of movie reviews
-reviewSchema.index({ movieId: 1, createdAt: -1 });
-
-// Static method to calculate average rating
-reviewSchema.statics.calculateAverageRating = async function(movieId) {
-    const stats = await this.aggregate([
+// Middleware để cập nhật averageRating và totalReviews của Movie
+reviewSchema.post('save', async function() {
+    const Movie = mongoose.model('Movie');
+    
+    // Tính rating trung bình mới
+    const stats = await this.constructor.aggregate([
         {
-            $match: { movieId: new mongoose.Types.ObjectId(movieId) }
+            $match: { movieId: this.movieId }
         },
         {
             $group: {
@@ -47,38 +47,23 @@ reviewSchema.statics.calculateAverageRating = async function(movieId) {
     ]);
 
     if (stats.length > 0) {
-        await mongoose.model('Movie').findByIdAndUpdate(movieId, {
-            averageRating: Math.round(stats[0].averageRating * 10) / 10,
+        await Movie.findByIdAndUpdate(this.movieId, {
+            averageRating: Math.round(stats[0].averageRating * 10) / 10, // Làm tròn 1 chữ số thập phân
             totalReviews: stats[0].totalReviews
         });
     } else {
-        await mongoose.model('Movie').findByIdAndUpdate(movieId, {
+        await Movie.findByIdAndUpdate(this.movieId, {
             averageRating: 0,
             totalReviews: 0
         });
     }
-};
-
-// Call calculateAverageRating after save
-reviewSchema.post('save', function() {
-    this.constructor.calculateAverageRating(this.movieId);
 });
 
-// Call calculateAverageRating before remove
-reviewSchema.pre('remove', function() {
-    this.constructor.calculateAverageRating(this.movieId);
+// Middleware để cập nhật khi xóa review
+reviewSchema.post('remove', async function() {
+    await this.constructor.post('save').call(this);
 });
 
-// Virtual populate
-reviewSchema.virtual('user', {
-    ref: 'User',
-    localField: 'userId',
-    foreignField: '_id',
-    justOne: true
-});
+const Review = mongoose.model('Review', reviewSchema);
 
-// Set toJSON option to include virtuals
-reviewSchema.set('toJSON', { virtuals: true });
-reviewSchema.set('toObject', { virtuals: true });
-
-module.exports = mongoose.model('Review', reviewSchema); 
+module.exports = Review; 
