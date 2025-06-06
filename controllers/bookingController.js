@@ -8,7 +8,9 @@ const bookingController = {
         // Thêm userId từ user đã đăng nhập
         const bookingData = {
             ...req.body,
-            userId: req.user._id
+            userId: req.user._id, // User ID from authenticated user
+            userName: req.user.name, // Pass user's name
+            userEmail: req.user.email // Pass user's email
         };
 
         const booking = await bookingService.createBooking(bookingData);
@@ -155,4 +157,4 @@ const bookingController = {
     })
 };
 
-module.exports = bookingController; 
+module.exports = bookingController;

@@ -238,12 +238,8 @@ class ShowtimeService {
             if (!seatFound) {
                 throw new ApiError(400, `Ghế ${seatNumber} không tồn tại`);
             }
-        }
-
-        // Cập nhật trạng thái ghế thành selected
-        for (const seatNumber of seats) {
-            await showtime.updateSeatStatus(seatNumber, 'selected');
-        }
+        }        // Các ghế hợp lệ và có sẵn - không cần cập nhật trạng thái
+        // Việc track ghế được chọn được thực hiện qua socket và selectedBy array
 
         return showtime;
     }

@@ -13,13 +13,28 @@ const showtimeSeatSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['available', 'booked', 'unavailable', 'selected'],
+        enum: ['available', 'booked', 'unavailable'],
         default: 'available'
     },
     price: {
         type: Number,
         required: true
-    }
+    },
+    selectedBy: [{
+        userId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'User',
+            required: true
+        },
+        userInfo: {
+            name: String,
+            email: String
+        },
+        selectedAt: {
+            type: Date,
+            default: Date.now
+        }
+    }]
 });
 
 // Schema chính cho suất chiếu
