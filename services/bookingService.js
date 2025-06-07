@@ -209,6 +209,52 @@ class BookingService {
 
             // Cập nhật trạng thái ghế thành booked
             const showtime = await Showtime.findById(booking.showtimeId);
+            if (!showtime) {
+                // This case should ideally be handled earlier or result in a clear error
+                // For now, let's log and potentially throw, or ensure booking status reflects this.
+                console.error(`[BookingService] Critical: Showtime not found (ID: ${booking.showtimeId}) for booking ${booking._id} during payment callback.`);
+                // Depending on desired behavior, you might want to mark booking as failed or errored.
+                // throw new ApiError(httpStatus.NOT_FOUND, `Showtime with ID ${booking.showtimeId} not found.`);
+                // For now, to prevent further errors, we'll stop processing this booking here if showtime is missing.
+                // Update booking status to reflect an issue if necessary.
+                // await booking.updatePaymentStatus('failed', { error: 'Showtime data missing' });
+                return booking; // Or throw
+            }
+
+            let needsExplicitSaveBeforeLoop = false;
+            for (const row of showtime.seatsAvailable) {
+                for (const seatInShowtime of row) {
+                    if (seatInShowtime.status === 'selected') {
+                        const isPartOfCurrentBooking = booking.seats.some(s => s.seatNumber === seatInShowtime.seatNumber);
+                        if (isPartOfCurrentBooking) {
+                            // This seat is part of the current booking and is 'selected'.
+                            // It will be correctly updated to 'booked' in the loop below.
+                            // console.log(`[BookingService] Seat ${seatInShowtime.seatNumber} in booking ${booking._id} is 'selected' in Showtime doc. Will be changed to 'booked'.`);
+                        } else {
+                            // This seat is 'selected' but NOT part of the current booking.
+                            // This is an invalid state for a seat not being actively booked.
+                            // Revert it to 'available' to clean up the Showtime document.
+                            console.warn(`[BookingService-FIX] Showtime ${showtime._id}, seat ${seatInShowtime.seatNumber} had 'selected' status (not in current booking ${booking._id}). Reverting to 'available'.`);
+                            seatInShowtime.status = 'available';
+                            needsExplicitSaveBeforeLoop = true; 
+                        }
+                    }
+                }
+            }
+
+            if (needsExplicitSaveBeforeLoop) {
+                showtime.markModified('seatsAvailable'); // Ensure Mongoose detects the change in the nested array
+                console.log(`[BookingService-FIX] Saving Showtime ${showtime._id} after cleaning extraneous 'selected' statuses.`);
+                try {
+                    await showtime.save(); // Save the cleaned state
+                } catch (saveError) {
+                    console.error(`[BookingService-FIX] Error saving Showtime ${showtime._id} after cleaning:`, saveError);
+                    // Decide how to handle this error - potentially fail the booking update
+                    // For now, we'll log and let the subsequent seat updates proceed, which might then fail
+                    // or succeed if the saveError was transient or unrelated to the 'selected' issue for other seats.
+                }
+            }
+
             for (const seat of booking.seats) {
                 await showtime.updateSeatStatus(seat.seatNumber, 'booked');
             }
@@ -260,6 +306,52 @@ class BookingService {
 
             // Cập nhật trạng thái ghế về available
             const showtime = await Showtime.findById(booking.showtimeId);
+            if (!showtime) {
+                // This case should ideally be handled earlier or result in a clear error
+                // For now, let's log and potentially throw, or ensure booking status reflects this.
+                console.error(`[BookingService] Critical: Showtime not found (ID: ${booking.showtimeId}) for booking ${booking._id} during payment callback.`);
+                // Depending on desired behavior, you might want to mark booking as failed or errored.
+                // throw new ApiError(httpStatus.NOT_FOUND, `Showtime with ID ${booking.showtimeId} not found.`);
+                // For now, to prevent further errors, we'll stop processing this booking here if showtime is missing.
+                // Update booking status to reflect an issue if necessary.
+                // await booking.updatePaymentStatus('failed', { error: 'Showtime data missing' });
+                return booking; // Or throw
+            }
+
+            let needsExplicitSaveBeforeLoop = false;
+            for (const row of showtime.seatsAvailable) {
+                for (const seatInShowtime of row) {
+                    if (seatInShowtime.status === 'selected') {
+                        const isPartOfCurrentBooking = booking.seats.some(s => s.seatNumber === seatInShowtime.seatNumber);
+                        if (isPartOfCurrentBooking) {
+                            // This seat is part of the current booking and is 'selected'.
+                            // It will be correctly updated to 'booked' in the loop below.
+                            // console.log(`[BookingService] Seat ${seatInShowtime.seatNumber} in booking ${booking._id} is 'selected' in Showtime doc. Will be changed to 'booked'.`);
+                        } else {
+                            // This seat is 'selected' but NOT part of the current booking.
+                            // This is an invalid state for a seat not being actively booked.
+                            // Revert it to 'available' to clean up the Showtime document.
+                            console.warn(`[BookingService-FIX] Showtime ${showtime._id}, seat ${seatInShowtime.seatNumber} had 'selected' status (not in current booking ${booking._id}). Reverting to 'available'.`);
+                            seatInShowtime.status = 'available';
+                            needsExplicitSaveBeforeLoop = true; 
+                        }
+                    }
+                }
+            }
+
+            if (needsExplicitSaveBeforeLoop) {
+                showtime.markModified('seatsAvailable'); // Ensure Mongoose detects the change in the nested array
+                console.log(`[BookingService-FIX] Saving Showtime ${showtime._id} after cleaning extraneous 'selected' statuses.`);
+                try {
+                    await showtime.save(); // Save the cleaned state
+                } catch (saveError) {
+                    console.error(`[BookingService-FIX] Error saving Showtime ${showtime._id} after cleaning:`, saveError);
+                    // Decide how to handle this error - potentially fail the booking update
+                    // For now, we'll log and let the subsequent seat updates proceed, which might then fail
+                    // or succeed if the saveError was transient or unrelated to the 'selected' issue for other seats.
+                }
+            }
+
             for (const seat of booking.seats) {
                 await showtime.updateSeatStatus(seat.seatNumber, 'available');
             }

@@ -72,8 +72,9 @@ const bookingController = {
 
     // Xử lý callback từ VNPay
     handleVNPayCallback: catchAsync(async (req, res) => {
+
         const vnpayResponse = { ...req.query };
-        
+
         // **SỬA LẠI: Không gọi verify ở đây nữa, gọi trong service nếu cần**
         const isValidPayment = vnpayService.verifyReturnUrl(vnpayResponse);
 
@@ -87,9 +88,10 @@ const bookingController = {
             transactionId: vnpayResponse.vnp_TransactionNo,
             rawResponse: vnpayResponse
         };
-        
+
         // Cập nhật trạng thái booking dựa trên kết quả thanh toán
         await bookingService.handlePaymentCallback(bookingId, paymentData);
+        console.log('bookingId', bookingId);
 
         // Chuyển hướng người dùng về trang kết quả thanh toán trên frontend
         const redirectUrl = new URL(`${process.env.FRONTEND_URL}/payment/result`);
@@ -99,12 +101,14 @@ const bookingController = {
         redirectUrl.searchParams.set('orderId', vnpayResponse.vnp_TxnRef);
         redirectUrl.searchParams.set('amount', vnpayResponse.vnp_Amount / 100);
 
-        // res.redirect(redirectUrl.toString());
-        //TODO: CẦN LÀM
+        res.redirect(redirectUrl.toString());
+        // TODO: CẦN LÀM
         res.json({
             status: 'success',
             data: { redirectUrl: redirectUrl.toString() }
         });
+        // chuyển hướng cho client dạng setLocation
+
     }),
 
     // Xử lý callback từ Momo
