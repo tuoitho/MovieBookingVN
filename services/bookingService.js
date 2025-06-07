@@ -71,20 +71,29 @@ class BookingService {
             promotionId: promotionId,
             status: 'pending',
             expiredAt: new Date(Date.now() + 30000) // 30s
-        });
-
-        // <<< THÊM MỚI: Gửi thông báo socket về các ghế vừa được giữ >>>
+        });        // <<< THÊM MỚI: Gửi thông báo socket về các ghế vừa được giữ >>>
         const io = getIO();
+        const seatSelectionManager = require('../socketManager').getSeatSelectionManager();
         const room = `showtime-${booking.showtimeId}`;
+        
+        // Xóa ghế khỏi danh sách temp selection và thông báo ghế đã được chọn bởi user khác
+        if (seatSelectionManager) {
+            // Loại bỏ ghế khỏi selection map để không ai có thể chọn nữa
+            booking.seats.forEach(seat => {
+                seatSelectionManager.handleSeatUnavailable(booking.showtimeId.toString(), seat.seatNumber);
+            });
+        }
+        
         const seatUpdates = booking.seats.map(seat => ({
             showtimeId: booking.showtimeId,
             seatNumber: seat.seatNumber,
-            status: 'unavailable', // Trạng thái ghế đang được giữ
-            users: [] // Không có ai đang chọn nữa
+            status: 'unavailable', // Trạng thái ghế đang được giữ bởi user khác
+            users: [], // Không có ai đang chọn nữa
+            message: `Ghế ${seat.seatNumber} đã được chọn bởi user khác`
         }));
         
         seatUpdates.forEach(update => io.to(room).emit('seat:update', update));
-        console.log(`Socket: Emitted ${seatUpdates.length} seat updates (status: unavailable) to room ${room}`);
+        console.log(`Socket: Emitted ${seatUpdates.length} seat updates (status: unavailable - được chọn bởi user khác) to room ${room}`);
         // <<< KẾT THÚC PHẦN THÊM MỚI >>>
 
         return booking;

@@ -28,6 +28,35 @@ const handleSuccessfulBooking = (showtimeId, seatNumbers, bookedByInfo) => {
     console.log(`📢 Emitted seats-booked to room ${room} for seats: ${seatNumbers.join(', ')} by ${bookedByInfo?.name || bookedByInfo?.userId}`);
 };
 
+// Xử lý khi ghế trở nên không khả dụng (được chọn bởi user khác)
+const handleSeatUnavailable = (showtimeId, seatNumber) => {
+    if (!ioInstance) {
+        console.error('Socket.IO instance not available for handleSeatUnavailable');
+        return;
+    }
+
+    const showtimeSelections = selectedSeatsMap.get(showtimeId);
+    if (showtimeSelections && showtimeSelections.has(seatNumber)) {
+        // Lấy danh sách users đang chọn ghế này
+        const users = showtimeSelections.get(seatNumber);
+        
+        // Thông báo cho từng user rằng ghế đã được chọn bởi user khác
+        users.forEach(user => {
+            if (user.socketId) {
+                ioInstance.to(user.socketId).emit('seat:unavailable-by-others', {
+                    showtimeId,
+                    seatNumber,
+                    message: `Ghế ${seatNumber} đã được chọn bởi user khác`
+                });
+            }
+        });
+        
+        // Xóa ghế khỏi selection map
+        showtimeSelections.delete(seatNumber);
+        console.log(`🚫 Seat ${seatNumber} in showtime ${showtimeId} marked as unavailable - selected by another user`);
+    }
+};
+
 
 module.exports = (io) => {
     ioInstance = io;
@@ -323,9 +352,8 @@ module.exports = (io) => {
                 }
             });
         });
-    }, 30 * 1000);
-
-    return {
-        handleSuccessfulBooking
+    }, 30 * 1000);    return {
+        handleSuccessfulBooking,
+        handleSeatUnavailable
     };
 };

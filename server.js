@@ -73,7 +73,7 @@ const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
 
     // Bắt đầu cron job để xử lý booking hết hạn
-    const JOB_INTERVAL_MS = 60 * 1000; // Chạy mỗi phút
+    const JOB_INTERVAL_MS = 5000; // Chạy mỗi phút
     const bookingExpirationJob = setInterval(async () => {
         try {
             console.log('Running booking expiration job...');
