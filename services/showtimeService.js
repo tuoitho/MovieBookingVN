@@ -243,6 +243,36 @@ class ShowtimeService {
 
         return showtime;
     }
+
+    // Cập nhật trạng thái của một ghế cụ thể
+    async updateSeatStatus(showtimeId, seatNumber, status) {
+        const showtime = await Showtime.findById(showtimeId);
+        if (!showtime) {
+            throw new ApiError(404, 'Không tìm thấy suất chiếu');
+        }
+
+        let seatFound = false;
+        
+        // Tìm và cập nhật ghế trong seatsAvailable
+        for (const row of showtime.seatsAvailable) {
+            for (const seat of row) {
+                if (seat.seatNumber === seatNumber) {
+                    seat.status = status;
+                    seatFound = true;
+                    break;
+                }
+            }
+            if (seatFound) break;
+        }
+
+        if (!seatFound) {
+            throw new ApiError(400, `Ghế ${seatNumber} không tồn tại`);
+        }
+
+        // Lưu thay đổi
+        await showtime.save();
+        return showtime;
+    }
 }
 
-module.exports = new ShowtimeService(); 
+module.exports = new ShowtimeService();

@@ -22,6 +22,7 @@ const bookingRoutes = require('./routes/bookingRoutes');
 const reviewRoutes = require('./routes/reviewRoutes');
 const promotionRoutes = require('./routes/promotionRoutes');
 const { initializeSocket } = require('./socketManager'); // Import the new socket manager
+const bookingService = require('./services/bookingService');
 
 // Initialize express app
 const app = express();
@@ -70,6 +71,29 @@ mongoose.connect(process.env.MONGODB_URI)
 const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
     console.log(`Server is running on port ${PORT}`);
+
+    // Bắt đầu cron job để xử lý booking hết hạn
+    const JOB_INTERVAL_MS = 60 * 1000; // Chạy mỗi phút
+    const bookingExpirationJob = setInterval(async () => {
+        try {
+            console.log('Running booking expiration job...');
+            const count = await bookingService.handleAllExpiredBookings();
+            if (count > 0) {
+                console.log(`Booking expiration job finished. Processed ${count} expired bookings.`);
+            }
+        } catch (error) {
+            console.error('Error in booking expiration job:', error);
+        }
+    }, JOB_INTERVAL_MS);
+
+    // Đảm bảo dừng job khi tắt server
+    process.on('SIGTERM', () => {
+        console.log('👋 SIGTERM RECEIVED. Shutting down gracefully');
+        clearInterval(bookingExpirationJob);
+        server.close(() => {
+            console.log('💥 Process terminated!');
+        });
+    });
 });
 
 // Initialize Socket.IO using the manager

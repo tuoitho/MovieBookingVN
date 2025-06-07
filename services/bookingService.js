@@ -2,130 +2,92 @@ const Booking = require('../models/bookingModel');
 const Showtime = require('../models/showtimeModel');
 const Promotion = require('../models/promotionModel');
 const ApiError = require('../utils/ApiError');
-const { getSeatSelectionManager } = require('../socketManager'); // Import the manager
+const { getIO } = require('../socketManager'); // <<< THAY ĐỔI: Sử dụng getIO để emit socket
+const showtimeService = require('./showtimeService');
 
 class BookingService {
     // Tạo booking mới
     async createBooking(bookingData) {
-        try {
-            // Kiểm tra suất chiếu và ghế
-            const showtime = await Showtime.findById(bookingData.showtimeId);
-            if (!showtime) {
-                throw new ApiError(404, 'Không tìm thấy suất chiếu');
-            }
-
-            // Kiểm tra xem ghế có tồn tại và còn trống không
-            const selectedSeats = [];
-            let totalAmount = 0;
-
-            for (const seatNumber of bookingData.seatNumbers) {
-                let seatFound = false;
-                for (const row of showtime.seatsAvailable) {
-                    for (const seat of row) {
-                        if (seat.seatNumber === seatNumber) {
-                            seatFound = true;
-                            if (seat.status !== 'available') {
-                                throw new ApiError(400, `Ghế ${seatNumber} không còn trống`);
-                            }
-                            selectedSeats.push({
-                                seatNumber: seat.seatNumber,
-                                type: seat.type,
-                                price: seat.price
-                            });
-                            totalAmount += seat.price;
-                            break;
-                        }
-                    }
-                    if (seatFound) break;
-                }
-                if (!seatFound) {
-                    throw new ApiError(400, `Ghế ${seatNumber} không tồn tại`);
-                }
-            }
-
-            // Tính giảm giá nếu có
-            let discountAmount = 0;
-            if (bookingData.promotionCode) {
-                const promotion = await Promotion.findOne({ 
-                    code: bookingData.promotionCode,
-                    status: 'active',
-                    startDate: { $lte: new Date() },
-                    endDate: { $gt: new Date() }
-                });
-
-                if (!promotion) {
-                    throw new ApiError(400, 'Mã khuyến mãi không hợp lệ hoặc đã hết hạn');
-                }
-
-                // Tính số tiền giảm giá
-                if (promotion.type === 'percentage') {
-                    discountAmount = (totalAmount * promotion.value) / 100;
-                    if (promotion.maxDiscount) {
-                        discountAmount = Math.min(discountAmount, promotion.maxDiscount);
-                    }
-                } else {
-                    discountAmount = promotion.value;
-                }
-
-                bookingData.promotionId = promotion._id;
-            }
-
-            // Tạo thời gian hết hạn (15 phút từ khi tạo)
-            const expiredAt = new Date();
-            expiredAt.setMinutes(expiredAt.getMinutes() + 15);
-
-            // Tạo booking
-            const booking = await Booking.create({
-                userId: bookingData.userId,
-                showtimeId: bookingData.showtimeId,
-                seats: selectedSeats,
-                totalAmount,
-                discountAmount,
-                finalAmount: totalAmount - discountAmount,
-                paymentMethod: bookingData.paymentMethod,
-                status: 'pending', // Initial status
-                expiredAt
-            });
-
-            // If booking is for 0 amount (e.g. fully discounted) and successful,
-            // treat it as 'completed' immediately and update seats.
-            if (booking.finalAmount === 0) {
-                booking.status = 'completed';
-                booking.paymentDetails = {
-                    transactionId: `FREE_${Date.now()}`,
-                    status: 'completed',
-                    message: 'Free booking due to promotion'
-                };
-                await booking.save();
-
-                // Update seat status in DB
-                for (const seat of booking.seats) {
-                    await showtime.updateSeatStatus(seat.seatNumber, 'booked');
-                }
-
-                // Notify via sockets
-                const seatSelectionManager = getSeatSelectionManager();
-                if (seatSelectionManager) {
-                    const bookedByInfo = { 
-                        userId: bookingData.userId, // Assuming bookingData.userId is the user's ID string
-                        name: bookingData.userName, // Pass userName if available
-                        email: bookingData.userEmail // Pass userEmail if available
-                    };
-                    // console.log(`Calling handleSuccessfulBooking for showtime ${booking.showtimeId} with seats ${booking.seats.map(s => s.seatNumber)} by ${JSON.stringify(bookedByInfo)}`);
-                    seatSelectionManager.handleSuccessfulBooking(
-                        booking.showtimeId.toString(),
-                        booking.seats.map(s => s.seatNumber),
-                        bookedByInfo
-                    );
-                }
-            }
-            // Ghế sẽ được track qua booking record và socket selectedBy array
-            // Không cần cập nhật status vì schema chỉ cho phép: available, booked, unavailable
-
-            return booking;
-        } catch (error) {
-            throw error;
+        const showtime = await Showtime.findById(bookingData.showtimeId);
+        if (!showtime) {
+            throw new ApiError(404, 'Không tìm thấy suất chiếu');
         }
+
+        const selectedSeats = [];
+        let totalAmount = 0;
+
+        for (const seatNumber of bookingData.seatNumbers) {
+            let seatFound = false;
+            for (const row of showtime.seatsAvailable) {
+                for (const seat of row) {
+                    if (seat.seatNumber === seatNumber) {
+                        seatFound = true;
+                        if (seat.status !== 'available') {
+                            throw new ApiError(400, `Ghế ${seatNumber} không còn trống hoặc đang được giữ`);
+                        }
+                        selectedSeats.push({
+                            seatNumber: seat.seatNumber,
+                            type: seat.type,
+                            price: seat.price
+                        });
+                        totalAmount += seat.price;
+                        break;
+                    }
+                }
+                if (seatFound) break;
+            }
+            if (!seatFound) {
+                throw new ApiError(400, `Ghế ${seatNumber} không tồn tại`);
+            }
+        }
+        
+        // <<< BẮT ĐẦU PHẦN LOGIC MỚI >>>
+        // Đánh dấu các ghế là 'unavailable' ngay lập tức để giữ chỗ
+        for (const seat of selectedSeats) {
+            await showtimeService.updateSeatStatus(showtime._id, seat.seatNumber, 'unavailable');
+        }
+        // <<< KẾT THÚC PHẦN LOGIC MỚI >>>
+
+        // Tính giảm giá nếu có
+        let discountAmount = 0;
+        let promotionId = null;
+        if (bookingData.promotionCode) {
+            // Logic xử lý promotion
+            const promotion = await Promotion.findValidByCode(bookingData.promotionCode);
+            if (promotion && promotion.isApplicableToOrder(totalAmount, showtime.movieId, showtime._id)) {
+                discountAmount = promotion.calculateDiscount(totalAmount);
+                promotionId = promotion._id;
+            } else {
+                 throw new ApiError(400, 'Mã khuyến mãi không hợp lệ hoặc không áp dụng được.');
+            }
+        }        const booking = await Booking.create({
+            userId: bookingData.userId,
+            showtimeId: bookingData.showtimeId,
+            seats: selectedSeats,
+            totalAmount,
+            discountAmount,
+            finalAmount: totalAmount - discountAmount,
+            paymentMethod: bookingData.paymentMethod,
+            promotionId: promotionId,
+            status: 'pending',
+            expiredAt: new Date(Date.now() + 30000) // 30s
+        });
+
+        // <<< THÊM MỚI: Gửi thông báo socket về các ghế vừa được giữ >>>
+        const io = getIO();
+        const room = `showtime-${booking.showtimeId}`;
+        const seatUpdates = booking.seats.map(seat => ({
+            showtimeId: booking.showtimeId,
+            seatNumber: seat.seatNumber,
+            status: 'unavailable', // Trạng thái ghế đang được giữ
+            users: [] // Không có ai đang chọn nữa
+        }));
+        
+        seatUpdates.forEach(update => io.to(room).emit('seat:update', update));
+        console.log(`Socket: Emitted ${seatUpdates.length} seat updates (status: unavailable) to room ${room}`);
+        // <<< KẾT THÚC PHẦN THÊM MỚI >>>
+
+        return booking;
     }
 
     // Lấy chi tiết booking
@@ -184,176 +146,139 @@ class BookingService {
         booking.status = 'cancelled';
         await booking.save();
 
+        // <<< BẮT ĐẦU PHẦN SỬA ĐỔI >>>
         // Cập nhật trạng thái ghế về available
         const showtime = await Showtime.findById(booking.showtimeId);
-        for (const seat of booking.seats) {
-            await showtime.updateSeatStatus(seat.seatNumber, 'available');
+        if (showtime) {
+            for (const seat of booking.seats) {
+                await showtimeService.updateSeatStatus(showtime._id, seat.seatNumber, 'available');
+            }
+
+            // Gửi thông báo socket về các ghế vừa được hoàn trả
+            const io = getIO();
+            const room = `showtime-${booking.showtimeId}`;
+            const seatUpdates = booking.seats.map(seat => ({
+                showtimeId: booking.showtimeId,
+                seatNumber: seat.seatNumber,
+                status: 'available',
+                users: []
+            }));
+            seatUpdates.forEach(update => io.to(room).emit('seat:update', update));
+            console.log(`Socket: Emitted ${seatUpdates.length} seat updates (status: available) to room ${room} due to cancellation.`);
         }
+        // <<< KẾT THÚC PHẦN SỬA ĐỔI >>>
 
         return booking;
     }
 
     // Xử lý callback từ cổng thanh toán
     async handlePaymentCallback(bookingId, paymentData) {
-        const booking = await Booking.findById(bookingId).populate('userId', 'name email'); // Populate user info
+        const booking = await Booking.findById(bookingId).populate('userId', 'name email');
         if (!booking) {
             throw new ApiError(404, 'Không tìm thấy booking');
         }
-        // console.log(paymentData);
-        // Xử lý kết quả thanh toán
+        
+        // Tránh xử lý lại booking đã hoàn tất hoặc thất bại
+        if (booking.status !== 'pending') {
+            console.warn(`Attempted to process a non-pending booking: ${bookingId}, status: ${booking.status}`);
+            return booking;
+        }
+
         if (paymentData.status === 'success') {
             await booking.updatePaymentStatus('completed', {
                 transactionId: paymentData.transactionId,
                 rawResponse: paymentData
             });
 
-            // Cập nhật trạng thái ghế thành booked
+            // <<< SỬA ĐỔI: Chuyển ghế từ 'unavailable' -> 'booked' >>>
             const showtime = await Showtime.findById(booking.showtimeId);
-            if (!showtime) {
-                // This case should ideally be handled earlier or result in a clear error
-                // For now, let's log and potentially throw, or ensure booking status reflects this.
-                console.error(`[BookingService] Critical: Showtime not found (ID: ${booking.showtimeId}) for booking ${booking._id} during payment callback.`);
-                // Depending on desired behavior, you might want to mark booking as failed or errored.
-                // throw new ApiError(httpStatus.NOT_FOUND, `Showtime with ID ${booking.showtimeId} not found.`);
-                // For now, to prevent further errors, we'll stop processing this booking here if showtime is missing.
-                // Update booking status to reflect an issue if necessary.
-                // await booking.updatePaymentStatus('failed', { error: 'Showtime data missing' });
-                return booking; // Or throw
-            }
+            if(showtime){
+                for (const seat of booking.seats) {
+                    await showtimeService.updateSeatStatus(showtime._id, seat.seatNumber, 'booked');
+                }
 
-            let needsExplicitSaveBeforeLoop = false;
-            for (const row of showtime.seatsAvailable) {
-                for (const seatInShowtime of row) {
-                    if (seatInShowtime.status === 'selected') {
-                        const isPartOfCurrentBooking = booking.seats.some(s => s.seatNumber === seatInShowtime.seatNumber);
-                        if (isPartOfCurrentBooking) {
-                            // This seat is part of the current booking and is 'selected'.
-                            // It will be correctly updated to 'booked' in the loop below.
-                            // console.log(`[BookingService] Seat ${seatInShowtime.seatNumber} in booking ${booking._id} is 'selected' in Showtime doc. Will be changed to 'booked'.`);
-                        } else {
-                            // This seat is 'selected' but NOT part of the current booking.
-                            // This is an invalid state for a seat not being actively booked.
-                            // Revert it to 'available' to clean up the Showtime document.
-                            console.warn(`[BookingService-FIX] Showtime ${showtime._id}, seat ${seatInShowtime.seatNumber} had 'selected' status (not in current booking ${booking._id}). Reverting to 'available'.`);
-                            seatInShowtime.status = 'available';
-                            needsExplicitSaveBeforeLoop = true; 
-                        }
-                    }
+                // Gửi thông báo socket về các ghế đã được đặt thành công
+                const io = getIO();
+                const seatSelectionManager = require('../socketManager').getSeatSelectionManager();
+                if (io && seatSelectionManager) {
+                    const bookedByInfo = { 
+                        userId: booking.userId._id.toString(), 
+                        name: booking.userId.name,
+                        email: booking.userId.email
+                    };
+                    seatSelectionManager.handleSuccessfulBooking(
+                        booking.showtimeId.toString(),
+                        booking.seats.map(s => s.seatNumber),
+                        bookedByInfo
+                    );
                 }
             }
-
-            if (needsExplicitSaveBeforeLoop) {
-                showtime.markModified('seatsAvailable'); // Ensure Mongoose detects the change in the nested array
-                console.log(`[BookingService-FIX] Saving Showtime ${showtime._id} after cleaning extraneous 'selected' statuses.`);
-                try {
-                    await showtime.save(); // Save the cleaned state
-                } catch (saveError) {
-                    console.error(`[BookingService-FIX] Error saving Showtime ${showtime._id} after cleaning:`, saveError);
-                    // Decide how to handle this error - potentially fail the booking update
-                    // For now, we'll log and let the subsequent seat updates proceed, which might then fail
-                    // or succeed if the saveError was transient or unrelated to the 'selected' issue for other seats.
-                }
-            }
-
-            for (const seat of booking.seats) {
-                await showtime.updateSeatStatus(seat.seatNumber, 'booked');
-            }
-
-            // Notify via sockets
-            const seatSelectionManager = getSeatSelectionManager();
-            if (seatSelectionManager && booking.userId) {
-                const bookedByInfo = { 
-                    userId: booking.userId._id.toString(), 
-                    name: booking.userId.name,
-                    email: booking.userId.email
-                };
-                // console.log(`Calling handleSuccessfulBooking (payment) for showtime ${booking.showtimeId} with seats ${booking.seats.map(s => s.seatNumber)} by ${JSON.stringify(bookedByInfo)}`);
-                seatSelectionManager.handleSuccessfulBooking(
-                    booking.showtimeId.toString(),
-                    booking.seats.map(s => s.seatNumber),
-                    bookedByInfo
-                );
-            }
-
         } else {
+            // <<< THÊM MỚI: Xử lý khi thanh toán thất bại >>>
             await booking.updatePaymentStatus('failed', {
                 rawResponse: paymentData
             });
+            booking.status = 'cancelled'; // Chuyển booking sang 'cancelled'
+            await booking.save();
 
-            // Cập nhật trạng thái ghế về available (SHOULD NOT HAPPEN if seats were only 'selected' temporarily)
-            // This part might be redundant if seats are not marked 'booked' in DB until payment success.
-            // However, if a booking record was created and then payment failed, these seats should become available again.
-            // The current socket logic primarily handles temporary selections.
-            // For failed payments, the booking status becomes 'failed', and seats are not 'booked'.
-            // No need to revert seat status here if they were never 'booked' in DB for this pending booking.
-            // The `handleExpiredBookings` or a cancellation flow would handle releasing them if they were held.
-            // For now, let's assume the temporary selection map is the source of truth for non-booked seats.
+            // Hoàn trả ghế về 'available'
+            const showtime = await Showtime.findById(booking.showtimeId);
+            if (showtime) {
+                for (const seat of booking.seats) {
+                    await showtimeService.updateSeatStatus(showtime._id, seat.seatNumber, 'available');
+                }
+                const io = getIO();
+                const room = `showtime-${booking.showtimeId}`;
+                const seatUpdates = booking.seats.map(seat => ({
+                    showtimeId: booking.showtimeId,
+                    seatNumber: seat.seatNumber,
+                    status: 'available',
+                    users: []
+                }));
+                seatUpdates.forEach(update => io.to(room).emit('seat:update', update));
+                console.log(`Socket: Emitted ${seatUpdates.length} seat updates (status: available) to room ${room} due to failed payment.`);
+            }
         }
-
         return booking;
     }
-
-    // Xử lý booking hết hạn
-    async handleExpiredBookings() {
+    
+    // <<< THÊM MỚI: Hàm xử lý các booking hết hạn >>>
+    async handleAllExpiredBookings() {
+        const now = new Date();
         const expiredBookings = await Booking.find({
             status: 'pending',
-            expiredAt: { $lt: new Date() }
+            expiredAt: { $lt: now }
         });
+
+        if (expiredBookings.length === 0) {
+            return 0; // Không có gì để làm
+        }
+        
+        console.log(`Found ${expiredBookings.length} expired bookings to process.`);
 
         for (const booking of expiredBookings) {
             booking.status = 'expired';
             await booking.save();
+            
+            console.log(`Booking ${booking._id} status updated to 'expired'.`);
 
-            // Cập nhật trạng thái ghế về available
+            // Hoàn trả ghế
             const showtime = await Showtime.findById(booking.showtimeId);
-            if (!showtime) {
-                // This case should ideally be handled earlier or result in a clear error
-                // For now, let's log and potentially throw, or ensure booking status reflects this.
-                console.error(`[BookingService] Critical: Showtime not found (ID: ${booking.showtimeId}) for booking ${booking._id} during payment callback.`);
-                // Depending on desired behavior, you might want to mark booking as failed or errored.
-                // throw new ApiError(httpStatus.NOT_FOUND, `Showtime with ID ${booking.showtimeId} not found.`);
-                // For now, to prevent further errors, we'll stop processing this booking here if showtime is missing.
-                // Update booking status to reflect an issue if necessary.
-                // await booking.updatePaymentStatus('failed', { error: 'Showtime data missing' });
-                return booking; // Or throw
-            }
-
-            let needsExplicitSaveBeforeLoop = false;
-            for (const row of showtime.seatsAvailable) {
-                for (const seatInShowtime of row) {
-                    if (seatInShowtime.status === 'selected') {
-                        const isPartOfCurrentBooking = booking.seats.some(s => s.seatNumber === seatInShowtime.seatNumber);
-                        if (isPartOfCurrentBooking) {
-                            // This seat is part of the current booking and is 'selected'.
-                            // It will be correctly updated to 'booked' in the loop below.
-                            // console.log(`[BookingService] Seat ${seatInShowtime.seatNumber} in booking ${booking._id} is 'selected' in Showtime doc. Will be changed to 'booked'.`);
-                        } else {
-                            // This seat is 'selected' but NOT part of the current booking.
-                            // This is an invalid state for a seat not being actively booked.
-                            // Revert it to 'available' to clean up the Showtime document.
-                            console.warn(`[BookingService-FIX] Showtime ${showtime._id}, seat ${seatInShowtime.seatNumber} had 'selected' status (not in current booking ${booking._id}). Reverting to 'available'.`);
-                            seatInShowtime.status = 'available';
-                            needsExplicitSaveBeforeLoop = true; 
-                        }
-                    }
+            if (showtime) {
+                for (const seat of booking.seats) {
+                    await showtimeService.updateSeatStatus(showtime._id, seat.seatNumber, 'available');
                 }
-            }
-
-            if (needsExplicitSaveBeforeLoop) {
-                showtime.markModified('seatsAvailable'); // Ensure Mongoose detects the change in the nested array
-                console.log(`[BookingService-FIX] Saving Showtime ${showtime._id} after cleaning extraneous 'selected' statuses.`);
-                try {
-                    await showtime.save(); // Save the cleaned state
-                } catch (saveError) {
-                    console.error(`[BookingService-FIX] Error saving Showtime ${showtime._id} after cleaning:`, saveError);
-                    // Decide how to handle this error - potentially fail the booking update
-                    // For now, we'll log and let the subsequent seat updates proceed, which might then fail
-                    // or succeed if the saveError was transient or unrelated to the 'selected' issue for other seats.
-                }
-            }
-
-            for (const seat of booking.seats) {
-                await showtime.updateSeatStatus(seat.seatNumber, 'available');
+                // Gửi thông báo socket
+                const io = getIO();
+                const room = `showtime-${booking.showtimeId}`;
+                const seatUpdates = booking.seats.map(seat => ({
+                    showtimeId: booking.showtimeId,
+                    seatNumber: seat.seatNumber,
+                    status: 'available',
+                    users: []
+                }));
+                seatUpdates.forEach(update => io.to(room).emit('seat:update', update));
+                console.log(`Socket: Emitted ${seatUpdates.length} seat updates (status: available) to room ${room} due to expiration.`);
             }
         }
 
