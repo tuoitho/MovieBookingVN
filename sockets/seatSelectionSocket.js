@@ -75,13 +75,31 @@ module.exports = (io) => {
             if (socket.currentShowtimeRoom && socket.currentShowtimeRoom !== `showtime-${showtimeId}`) {
                 socket.leave(socket.currentShowtimeRoom);
                 console.log(`🚪 User ${socket.userId} left room: ${socket.currentShowtimeRoom}`);
-            }
-
-            const room = `showtime-${showtimeId}`;
+            }            const room = `showtime-${showtimeId}`;
 
             // Check if already in the room
             if (socket.rooms.has(room)) {
                 console.log(`⚠️ User ${socket.userId} already in room: ${room}`);
+                
+                // Vẫn cần gửi initial seat map để cập nhật giao diện
+                if (!selectedSeatsMap.has(showtimeId)) {
+                    selectedSeatsMap.set(showtimeId, new Map());
+                }
+                
+                const showtimeSelections = selectedSeatsMap.get(showtimeId);
+                const initialSeatMap = [];
+                showtimeSelections.forEach((users, seatNumber) => {
+                    if (users.length > 0) {
+                        initialSeatMap.push({
+                            seatNumber,
+                            status: 'selected',
+                            users: users
+                        });
+                    }
+                });
+
+                socket.emit('initial-seat-map', { showtimeId, seats: initialSeatMap });
+                console.log(`🗺️ Sent initial seat map for showtime ${showtimeId} to ${socket.userId} (already in room) with ${initialSeatMap.length} selected seats.`);
                 return;
             }
 
