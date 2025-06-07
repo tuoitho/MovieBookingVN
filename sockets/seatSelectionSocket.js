@@ -1,13 +1,11 @@
-// const Showtime = require('../models/showtimeModel'); // Not needed for temporary selection tracking
-
-// In-memory store for selected seats: Map<showtimeId, Map<seatNumber, {userId, socketId, userInfo, timestamp}>>
+// In-memory store for selected seats: Map<showtimeId, Map<seatNumber, Array<{userId, socketId, userInfo, timestamp}>>>
 const selectedSeatsMap = new Map();
 let ioInstance = null; // To store the io instance
 const IDLE_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
 
 const handleSuccessfulBooking = (showtimeId, seatNumbers, bookedByInfo) => {
     if (!ioInstance) {
-        console.error('Socket.IO instance not available in seatSelectionSocket for handleSuccessfulBooking');
+        console.error('Socket.IO instance not available for handleSuccessfulBooking');
         return;
     }
 
@@ -32,218 +30,301 @@ const handleSuccessfulBooking = (showtimeId, seatNumbers, bookedByInfo) => {
 
 
 module.exports = (io) => {
-    ioInstance = io; // Store the io instance
-    console.log('🔧 Socket.IO handlers registered with new in-memory strategy, including idle timeout.');
+    ioInstance = io;
+    console.log('🔧 Socket.IO handlers registered with new real-time contention logic.');
 
     io.on('connection', (socket) => {
-        // socket.userId and socket.userInfo should be populated by the authentication middleware
         console.log(`✅ User ${socket.userInfo?.name || socket.userId || 'Unknown'} connected with socket ID: ${socket.id}`);
-        if (socket.userInfo) {
-            console.log(`🔐 User info:`, socket.userInfo);
-        } else {
-            console.warn(`⚠️ User info not available for socket ID: ${socket.id}. Ensure authentication middleware is working.`);
-        }
 
-
-        // Join a specific showtime room
         socket.on('joinShowtime', (showtimeId) => {
             if (!socket.userId) {
-                console.error(`❌ Attempt to join showtime without userId for socket ${socket.id}`);
                 socket.emit('error', { message: 'Authentication error: User ID not found.' });
                 return;
             }
+
+            // Leave previous showtime room if exists
+            if (socket.currentShowtimeRoom && socket.currentShowtimeRoom !== `showtime-${showtimeId}`) {
+                socket.leave(socket.currentShowtimeRoom);
+                console.log(`🚪 User ${socket.userId} left room: ${socket.currentShowtimeRoom}`);
+            }
+
             const room = `showtime-${showtimeId}`;
+
+            // Check if already in the room
+            if (socket.rooms.has(room)) {
+                console.log(`⚠️ User ${socket.userId} already in room: ${room}`);
+                return;
+            }
+
             socket.join(room);
             socket.currentShowtimeRoom = room;
-            socket.currentShowtimeId = showtimeId; // Store for easier access on disconnect
+            socket.currentShowtimeId = showtimeId;
 
             console.log(`🚪 User ${socket.userId} joined room: ${room}`);
 
             // Initialize showtime in map if not present
             if (!selectedSeatsMap.has(showtimeId)) {
                 selectedSeatsMap.set(showtimeId, new Map());
-            }            // Send current selected seats for this showtime to the joining user
-            const currentShowtimeSelections = selectedSeatsMap.get(showtimeId) || new Map();
-            const initialSeatUpdates = [];
-            currentShowtimeSelections.forEach((selection, seatNumber) => {
-                initialSeatUpdates.push({
-                    seatNumber,
-                    status: 'selected',
-                    // Format consistently as users array to make frontend handling simpler
-                    users: [{
-                        userId: selection.userId,
-                        userInfo: selection.userInfo,
-                    }]
-                });
+            }
+
+            const showtimeSelections = selectedSeatsMap.get(showtimeId);
+            const seatsToUpdate = [];
+
+            // Clear any previous selections by this user for this showtime
+            showtimeSelections.forEach((users, seatNumber) => {
+                const userIndex = users.findIndex(u => u.userId === socket.userId);
+                if (userIndex > -1) {
+                    users.splice(userIndex, 1);
+                    console.log(`🧹 Cleared previous selection/contention for seat ${seatNumber} by user ${socket.userId} on rejoin.`);
+                    seatsToUpdate.push(seatNumber);
+                }
             });
 
-            if (initialSeatUpdates.length > 0) {
-                socket.emit('initial-seat-map', { showtimeId, seats: initialSeatUpdates });
-                console.log(`🗺️ Sent initial seat map for showtime ${showtimeId} to ${socket.userId}:`, initialSeatUpdates.length, "seats");
-            } else {
-                 socket.emit('initial-seat-map', { showtimeId, seats: [] }); // Send empty if no selections
-                console.log(`🗺️ No initial selected seats for showtime ${showtimeId} to send to ${socket.userId}`);
-            }
+            // Broadcast updates for cleared seats
+            seatsToUpdate.forEach(seatNumber => {
+                const remainingUsers = showtimeSelections.get(seatNumber);
+                if (remainingUsers && remainingUsers.length > 0) {
+                    io.to(room).emit('seat:update', {
+                        showtimeId,
+                        seatNumber,
+                        status: 'selected',
+                        users: remainingUsers
+                    });
+                } else {
+                    showtimeSelections.delete(seatNumber); // Clean up empty entry
+                    io.to(room).emit('seat:update', {
+                        showtimeId,
+                        seatNumber,
+                        status: 'available',
+                        users: []
+                    });
+                }
+            });
+
+            // Send the complete, current seat map to the joining user
+            const initialSeatMap = [];
+            showtimeSelections.forEach((users, seatNumber) => {
+                if (users.length > 0) {
+                    initialSeatMap.push({
+                        seatNumber,
+                        status: 'selected',
+                        users: users
+                    });
+                }
+            });
+
+            socket.emit('initial-seat-map', { showtimeId, seats: initialSeatMap });
+            console.log(`🗺️ Sent initial seat map for showtime ${showtimeId} to ${socket.userId} with ${initialSeatMap.length} selected seats.`);
         });
 
-        // Handle seat selection
         socket.on('seat:selected', ({ showtimeId, seatNumber }) => {
             if (!socket.userId || !socket.userInfo) {
-                console.error(`❌ seat:selected from unauthenticated socket ${socket.id}`);
                 socket.emit('error', { message: 'Authentication required to select seats.' });
-                return;
-            }
-            if (!showtimeId || !seatNumber) {
-                socket.emit('error', { message: 'Missing showtimeId or seatNumber for seat:selected' });
                 return;
             }
 
             const showtimeSelections = selectedSeatsMap.get(showtimeId);
             if (!showtimeSelections) {
-                console.warn(`⚠️ Showtime ${showtimeId} not found in selectedSeatsMap. Client might not have joined room.`);
-                 socket.emit('error', { message: `Showtime ${showtimeId} not initialized. Please rejoin.` });
+                socket.emit('error', { message: `Showtime ${showtimeId} not initialized. Please rejoin.` });
                 return;
             }
 
-            const existingSelection = showtimeSelections.get(seatNumber);
+            if (!showtimeSelections.has(seatNumber)) {
+                showtimeSelections.set(seatNumber, []);
+            }
 
-            if (existingSelection && existingSelection.userId !== socket.userId) {
-                console.log(`🚫 Seat ${seatNumber} in showtime ${showtimeId} already selected by user ${existingSelection.userId}`);
-                socket.emit('seat:select-failed', {
-                    seatNumber,
-                    message: 'Ghế này đã được người khác chọn.',
-                    currentHolder: existingSelection.userInfo
-                });
+            const users = showtimeSelections.get(seatNumber);
+            const isAlreadySelectedByUser = users.some(u => u.userId === socket.userId);
+
+            if (isAlreadySelectedByUser) {
+                console.log(`ℹ️ User ${socket.userId} re-selected seat ${seatNumber}. No action needed.`);
                 return;
             }
 
-            // Select the seat
-            showtimeSelections.set(seatNumber, {
+            users.push({
                 userId: socket.userId,
                 socketId: socket.id,
-                userInfo: socket.userInfo, // Store userInfo for richer display on client
-                timestamp: Date.now() // Add timestamp for idle tracking
+                userInfo: socket.userInfo,
+                timestamp: Date.now()
             });
-            console.log(`🪑 User ${socket.userId} selected seat ${seatNumber} in showtime ${showtimeId}`);
 
-            // Broadcast update to all users in the showtime room
+            // Sort by timestamp to ensure the primary holder is always first
+            users.sort((a, b) => a.timestamp - b.timestamp);
+
+            console.log(`🪑 User ${socket.userId} selected/contended for seat ${seatNumber}. Total contenders: ${users.length}`);
+
             io.to(`showtime-${showtimeId}`).emit('seat:update', {
                 showtimeId,
                 seatNumber,
                 status: 'selected',
-                userId: socket.userId,
-                userInfo: socket.userInfo
+                users: users
             });
         });
 
-        // Handle seat deselection
         socket.on('seat:unselected', ({ showtimeId, seatNumber }) => {
             if (!socket.userId) {
-                console.error(`❌ seat:unselected from unauthenticated socket ${socket.id}`);
                 socket.emit('error', { message: 'Authentication required.' });
-                return;
-            }
-             if (!showtimeId || !seatNumber) {
-                socket.emit('error', { message: 'Missing showtimeId or seatNumber for seat:unselected' });
                 return;
             }
 
             const showtimeSelections = selectedSeatsMap.get(showtimeId);
-            if (!showtimeSelections) {
-                console.warn(`⚠️ Showtime ${showtimeId} not found in selectedSeatsMap for unselection.`);
-                socket.emit('error', { message: `Showtime ${showtimeId} not initialized for unselection.` });
+            if (!showtimeSelections || !showtimeSelections.has(seatNumber)) {
+                console.log(`ℹ️ Seat ${seatNumber} was not selected, no action for unselect by ${socket.userId}`);
                 return;
             }
 
-            const selection = showtimeSelections.get(seatNumber);
+            const users = showtimeSelections.get(seatNumber);
+            const userIndex = users.findIndex(u => u.userId === socket.userId);
 
-            if (selection && selection.userId === socket.userId) {
-                showtimeSelections.delete(seatNumber);
-                console.log(`🟢 User ${socket.userId} unselected seat ${seatNumber} in showtime ${showtimeId}`);
+            if (userIndex > -1) {
+                users.splice(userIndex, 1);
+                console.log(`🟢 User ${socket.userId} unselected seat ${seatNumber}. Remaining contenders: ${users.length}`);
 
-                // Broadcast update to all users in the showtime room
-                io.to(`showtime-${showtimeId}`).emit('seat:update', {
-                    showtimeId,
-                    seatNumber,
-                    status: 'available', 
-                    userId: null,
-                    userInfo: null
-                });
-            } else if (selection) {
-                console.warn(`⚠️ User ${socket.userId} tried to unselect seat ${seatNumber} held by ${selection.userId}`);
-                socket.emit('seat:unselect-failed', { seatNumber, message: 'Không thể bỏ chọn ghế không phải của bạn.' });
-            } else {
-                console.log(`ℹ️ Seat ${seatNumber} in showtime ${showtimeId} was not selected, no action for unselect by ${socket.userId}`);
-            }
-        });
-
-        // Handle disconnection
-        socket.on('disconnect', () => {
-            console.log(`🔌 User ${socket.userInfo?.name || socket.userId || 'Unknown'} (ID: ${socket.id}) disconnected.`);
-
-            if (!socket.userId && !socket.id) { // Check both as fallback
-                console.warn(`⚠️ Disconnected socket had no userId or socket.id. No seats to clean up.`);
-                return;
-            }
-            
-            selectedSeatsMap.forEach((showtimeSelections, showtimeId) => {
-                const seatsToUpdate = [];
-                showtimeSelections.forEach((selection, seatNumber) => {
-                    if (selection.socketId === socket.id) {
-                        seatsToUpdate.push(seatNumber);
-                    }
-                });
-
-                seatsToUpdate.forEach(seatNumber => {
+                if (users.length === 0) {
                     showtimeSelections.delete(seatNumber);
-                    console.log(`🧹 Cleaned up seat ${seatNumber} in showtime ${showtimeId} due to disconnect of socket ${socket.id}`);
                     io.to(`showtime-${showtimeId}`).emit('seat:update', {
                         showtimeId,
                         seatNumber,
                         status: 'available',
-                        userId: null,
-                        userInfo: null
+                        users: []
                     });
+                } else {
+                    io.to(`showtime-${showtimeId}`).emit('seat:update', {
+                        showtimeId,
+                        seatNumber,
+                        status: 'selected',
+                        users: users
+                    });
+                }
+            } else {
+                socket.emit('seat:unselect-failed', { seatNumber, message: 'Không thể bỏ chọn ghế không phải của bạn.' });
+            }
+        });
+
+        socket.on('leaveShowtime', (showtimeId) => {
+            if (!socket.userId) return;
+
+            const room = `showtime-${showtimeId}`;
+            socket.leave(room);
+            console.log(`🚪 User ${socket.userId} left room: ${room}`);
+
+            // Clear user's selections for this showtime
+            const showtimeSelections = selectedSeatsMap.get(showtimeId);
+            if (showtimeSelections) {
+                showtimeSelections.forEach((users, seatNumber) => {
+                    const userIndex = users.findIndex(u => u.userId === socket.userId);
+                    if (userIndex > -1) {
+                        users.splice(userIndex, 1);
+                        if (users.length === 0) {
+                            showtimeSelections.delete(seatNumber);
+                            io.to(room).emit('seat:update', {
+                                showtimeId,
+                                seatNumber,
+                                status: 'available',
+                                users: []
+                            });
+                        } else {
+                            io.to(room).emit('seat:update', {
+                                showtimeId,
+                                seatNumber,
+                                status: 'selected',
+                                users: users
+                            });
+                        }
+                    }
+                });
+            }
+
+            // Clear room reference
+            if (socket.currentShowtimeRoom === room) {
+                socket.currentShowtimeRoom = null;
+                socket.currentShowtimeId = null;
+            }
+        });
+
+        socket.on('disconnect', () => {
+            console.log(`🔌 User ${socket.userInfo?.name || socket.userId || 'Unknown'} (ID: ${socket.id}) disconnected.`);
+            if (!socket.userId) return;
+
+            selectedSeatsMap.forEach((showtimeSelections, showtimeId) => {
+                showtimeSelections.forEach((users, seatNumber) => {
+                    const userIndex = users.findIndex(u => u.socketId === socket.id);
+                    if (userIndex > -1) {
+                        users.splice(userIndex, 1);
+                        console.log(`🧹 Cleaned up seat ${seatNumber} in showtime ${showtimeId} due to disconnect of ${socket.id}. Remaining: ${users.length}`);
+
+                        if (users.length === 0) {
+                            showtimeSelections.delete(seatNumber);
+                            io.to(`showtime-${showtimeId}`).emit('seat:update', {
+                                showtimeId,
+                                seatNumber,
+                                status: 'available',
+                                users: []
+                            });
+                        } else {
+                            io.to(`showtime-${showtimeId}`).emit('seat:update', {
+                                showtimeId,
+                                seatNumber,
+                                status: 'selected',
+                                users: users
+                            });
+                        }
+                    }
                 });
             });
         });
     });
 
-    // Start idle timeout checker
     setInterval(() => {
         if (!ioInstance) return;
-
         const now = Date.now();
+
         selectedSeatsMap.forEach((showtimeSelections, showtimeId) => {
-            showtimeSelections.forEach((selection, seatNumber) => {
-                if (selection.timestamp && (now - selection.timestamp > IDLE_TIMEOUT_MS)) {
-                    // Seat selection has timed out
-                    showtimeSelections.delete(seatNumber);
-                    console.log(`⏳ Seat ${seatNumber} in showtime ${showtimeId} timed out for user ${selection.userInfo?.name || selection.userId}. Removing selection.`);
+            showtimeSelections.forEach((users, seatNumber) => {
+                let usersTimedOut = false;
+                const initialUserCount = users.length;
 
-                    const room = `showtime-${showtimeId}`;
-                    ioInstance.to(room).emit('seat:update', {
-                        showtimeId,
-                        seatNumber,
-                        status: 'available',
-                        userId: null,
-                        userInfo: null
-                    });
+                for (let i = users.length - 1; i >= 0; i--) {
+                    const selection = users[i];
+                    if (selection.timestamp && (now - selection.timestamp > IDLE_TIMEOUT_MS)) {
+                        console.log(`⏳ Seat ${seatNumber} selection by ${selection.userInfo?.name} timed out.`);
+                        const timedOutUserSocketId = selection.socketId;
+                        users.splice(i, 1);
+                        usersTimedOut = true;
 
-                    // Notify the specific user whose selection timed out
-                    if (selection.socketId) {
-                        ioInstance.to(selection.socketId).emit('seat:selection-timed-out', {
+                        if (timedOutUserSocketId) {
+                            ioInstance.to(timedOutUserSocketId).emit('seat:selection-timed-out', {
+                                showtimeId,
+                                seatNumber,
+                                message: `Your selection for seat ${seatNumber} has timed out.`
+                            });
+                        }
+                    }
+                }
+
+                if (usersTimedOut) {
+                     console.log(`⏳ Timed out users removed from seat ${seatNumber}. Before: ${initialUserCount}, After: ${users.length}`);
+                    if (users.length === 0) {
+                        showtimeSelections.delete(seatNumber);
+                        ioInstance.to(`showtime-${showtimeId}`).emit('seat:update', {
                             showtimeId,
                             seatNumber,
-                            message: `Your selection for seat ${seatNumber} has timed out.`
+                            status: 'available',
+                            users: []
+                        });
+                    } else {
+                        ioInstance.to(`showtime-${showtimeId}`).emit('seat:update', {
+                            showtimeId,
+                            seatNumber,
+                            status: 'selected',
+                            users: users
                         });
                     }
                 }
             });
         });
-    }, 30 * 1000); // Check every 30 seconds
+    }, 30 * 1000);
 
-    // Return the manager object
     return {
         handleSuccessfulBooking
     };
